@@ -36,7 +36,7 @@
     <TextBox x:Name="SelfName" Margin="0,4,0,14"/>
 
     <TextBlock Text="保存フォルダ" FontWeight="SemiBold"/>
-    <TextBlock Text="ここに matches-日付.jsonl と、撮った画像（captures フォルダ）を保存します。" Foreground="{StaticResource Text2}" FontSize="12"/>
+    <TextBlock Text="この下に 3 つのフォルダを作ります。ビューアに入れるのは「1_戦績_ビューアに入れる」の中の matches-日付.jsonl です。" Foreground="{StaticResource Text2}" FontSize="12" TextWrapping="Wrap"/>
     <DockPanel Margin="0,4,0,14">
       <Button DockPanel.Dock="Right" Content="選ぶ…" Style="{StaticResource DarkButton}" Margin="8,0,0,0" Click="OnBrowse"/>
       <TextBox x:Name="SaveFolder"/>

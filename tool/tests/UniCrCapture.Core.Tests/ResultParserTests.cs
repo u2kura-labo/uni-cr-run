@@ -94,6 +94,7 @@ public class ResultParserTests
         var screen = FakeScreen.Build(opt: new FakeScreen.Options
         {
             NoWinWord = true,
+            Headline = null, // 見出しも読めないので、LOSE の語だけが手がかり
             AstraKda = "ロ:ロ ロ:ロ ロ:ロ",
             UmbraKda = "ロ:ロ ロ:ロ ロ:ロ",
         });
@@ -216,6 +217,48 @@ public class ResultParserTests
 
         Assert.True(r.Success, string.Join("\n", r.Errors));
         Assert.Equal(FakeScreen.RealMatch().Select(e => e.Name), r.Match!.Players.Select(p => p.Name));
+    }
+
+    /// <summary>
+    /// 実際に起きた悪循環：K / D / A が読めない行は「数字の列が5つ以上」の条件を満たさず、
+    /// 行として数えられない → 拡大して読み直す帯もそこまで届かない → いつまでも読めない。
+    /// 10 行そろうこと、読み直しの帯が最後の行まで届くこと。
+    /// </summary>
+    [Fact]
+    public void CountsRowsEvenWhenTheirKdaWasNotRead()
+    {
+        var screen = FakeScreen.Build(opt: new FakeScreen.Options { DropKdaInLaterRows = true });
+        var r = Parse(screen);
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Equal(10, r.Match!.Players.Count);
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("プレイヤーの行が"));
+
+        var area = ResultParser.SmallNumberArea(screen.Words);
+        Assert.NotNull(area);
+        Assert.True(area!.Value.Bottom >= 202 + 9 * 32, $"読み直しの帯が最後の行まで届いていない（下端 {area.Value.Bottom}）");
+    }
+
+    /// <summary>
+    /// 表の上の「チーム・○○の勝利！」は大きい字なので、欄の中の小さな WIN / LOSE より確実に読める。
+    /// 隊の名前が1文字読み違えられていても通ること（アンブラ → アンフラ）。
+    /// </summary>
+    [Fact]
+    public void ReadsTheWinnerFromTheHeadlineWhenNothingElseCanBeRead()
+    {
+        var screen = FakeScreen.Build(opt: new FakeScreen.Options
+        {
+            Headline = "アンフラ", // アンブラの読み違い
+            NoWinWord = true,
+            NoLoseWord = true,
+            AstraKda = "ロ:ロ ロ:ロ ロ:ロ",
+            UmbraKda = "ロ:ロ ロ:ロ ロ:ロ",
+        });
+        var r = Parse(screen);
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Equal("lose", r.Match!.Teams["astra"].Result);
+        Assert.Equal("win", r.Match.Teams["umbra"].Result);
     }
 
     [Fact]

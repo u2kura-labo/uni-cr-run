@@ -68,6 +68,12 @@ public sealed class FakeScreen : IPixelSource
         public bool AstraIsRed { get; init; }
         /// <summary>名前の中の l（小文字のエル）が I（大文字のアイ）になる。</summary>
         public bool MisreadL { get; init; }
+        /// <summary>後ろ半分の行で K / D / A が丸ごと読めない（実際に起きた）。</summary>
+        public bool DropKdaInLaterRows { get; init; }
+        /// <summary>表の上の「チーム・○○の勝利！」の見出し。null なら出さない。</summary>
+        public string? Headline { get; init; } = "アストラ";
+        /// <summary>LOSE の字も読み落とす。</summary>
+        public bool NoLoseWord { get; init; }
         public string AstraKda { get; init; } = "K:18 D:16 A:54";
         public string UmbraKda { get; init; } = "K:16 D:18 A:49";
     }
@@ -111,8 +117,11 @@ public sealed class FakeScreen : IPixelSource
         // チーム欄の下地。赤寄り / 青寄りのどちらがどちらの隊かは、この色から決まる
         var warmPanel = ((byte)221, (byte)164, (byte)153);
         var coolPanel = ((byte)150, (byte)167, (byte)205);
-        s._panels.Add((90 + s._tableAt, 20, 540 + s._tableAt, 95, opt.AstraIsRed ? warmPanel : coolPanel));
-        s._panels.Add((585 + s._tableAt, 20, 1035 + s._tableAt, 95, opt.AstraIsRed ? coolPanel : warmPanel));
+        s._panels.Add((90 + s._tableAt, 24, 540 + s._tableAt, 100, opt.AstraIsRed ? warmPanel : coolPanel));
+        s._panels.Add((585 + s._tableAt, 24, 1035 + s._tableAt, 100, opt.AstraIsRed ? coolPanel : warmPanel));
+
+        // チーム欄より上に出る見出し（隊の名前がここにも出るので、色を測るときに取り違えやすい）
+        if (opt.Headline is not null) s.Japanese($"チーム・{opt.Headline}の勝利！", 400, 4, 16);
 
         s.Japanese("チーム・アストラ", 115, 43, h);
         s.Japanese("進行度", 360, 34, h);
@@ -122,7 +131,7 @@ public sealed class FakeScreen : IPixelSource
         s.Japanese("チーム・アンブラ", 610, 43, h);
         s.Japanese("進行度", 885, 34, h);
         s.Latin("50.0%", 960, 30, 90, 22);
-        s.Latin("LOSE", 596, 73, 40, 12);
+        if (!opt.NoLoseWord) s.Latin("LOSE", 596, 73, 40, 12);
         foreach (var (t, i) in opt.UmbraKda.Split(' ').Select((t, i) => (t, i))) s.Latin(t, 793 + i * 88, 63, 60, 18);
 
         // ---- 中段 ----
@@ -173,12 +182,13 @@ public sealed class FakeScreen : IPixelSource
             var worldX = 270.0;
             s.Word(p.World, ref worldX, y, 8.5, h, opt.MisreadR, null);
             s.Japanese(p.Tier, 380, y, h); // 階級の文字は K の列まで届かない（実際の画面と同じ）
-            if (!opt.DropKdValues)
+            var noKda = opt.DropKdaInLaterRows && i >= 5;
+            if (!opt.DropKdValues && !noKda)
             {
                 s.Latin(p.K.ToString(), KX, y, 9, h);
                 s.Latin(p.D.ToString(), DX, y, 9, h);
             }
-            s.Latin(p.A.ToString(), AX, y, 16, h);
+            if (!noKda) s.Latin(p.A.ToString(), AX, y, 16, h);
             s.Number(p.Dmg, 637, y, opt.SplitNumbersAtComma);
             s.Number(p.Taken, 777, y, opt.SplitNumbersAtComma);
             s.Number(p.Heal, 917, y, opt.SplitNumbersAtComma);

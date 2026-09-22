@@ -66,9 +66,7 @@ public static partial class ResultParser
         var rank = ReadRank(above);
         var duration = ReadDuration(above);
         // どちらの隊が赤寄りの色かは、チーム欄の下地から合わせる（決め打ちにしない）
-        var astraIsWarm = AstraIsWarm(pixels,
-            TextLayout.FindInLines(above, "アストラ")?.Hit,
-            TextLayout.FindInLines(above, "アンブラ")?.Hit);
+        var astraIsWarm = AstraIsWarm(pixels, FindLowest(above, "アストラ"), FindLowest(above, "アンブラ"));
 
         // ---------- 4. プレイヤー ----------
         var players = new List<PlayerRecord>();
@@ -189,6 +187,13 @@ public static partial class ResultParser
 
         var top = headerLine.Top;
         var bottom = rows[^1].Bottom;
+        // 行として数えられなかった行があっても帯が届くように、10 行ぶんまで下に伸ばす
+        if (rows.Count is > 1 and < 10)
+        {
+            var gaps = rows.Zip(rows.Skip(1), (a, b) => b.Top - a.Top).OrderBy(g => g).ToList();
+            var spacing = gaps[gaps.Count / 2];
+            if (spacing > 0) bottom = Math.Max(bottom, rows[0].Top + spacing * 9 + rowHeight * 2);
+        }
         return new PixelRect(left, top, right - left, bottom - top);
     }
 
@@ -300,10 +305,13 @@ public static partial class ResultParser
                 row.Top = Math.Min(row.Top, w.Y);
                 row.Bottom = Math.Max(row.Bottom, w.Bottom);
             }
-            // 数字の列が5つ以上埋まっている行だけを、プレイヤーの行とみなす
+            // 数字の列が4つ以上埋まっている行を、プレイヤーの行とみなす。
+            // K / D / A が丸ごと落ちても、残る4列（総与・総被・総与ヒール・移送時間）で行と分かるようにする。
+            // 5つ必要にしていたため、K/D/A が落ちた行が行として数えられず、
+            // 読み直しの帯もそこまで届かない、という悪循環になっていた。
             var numericCols = new[] { Col.K, Col.D, Col.A, Col.Dmg, Col.Taken, Col.Heal, Col.Crystal };
             var filled = numericCols.Count(c => TextLayout.DigitsOnly(row.Joined(c)).Length > 0);
-            if (filled >= 5) rows.Add(row);
+            if (filled >= 4) rows.Add(row);
             else if (rows.Count > 0 && line.CenterY - rows[^1].Bottom > rowHeight * 3) break; // 表の下の文字に着いた
             if (rows.Count == 10) break;
         }
@@ -385,11 +393,18 @@ public static partial class ResultParser
     }
 
     /// <summary>
-    /// FF14 の名前は、先頭（と ' - の次）以外は小文字なので、全部大文字の語は読み違い。
-    /// KO → Ko のように直す。
+    /// FF14 の名前で大文字になるのは、先頭と ' - の次だけ。
+    /// それ以外の大文字は読み違いなので小文字に直す（KO → Ko、Pinot NOir → Pinot Noir）。
     /// </summary>
-    private static string FixCase(string part) =>
-        part.Any(char.IsLower) ? part : char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant();
+    private static string FixCase(string part)
+    {
+        var chars = part.ToCharArray();
+        for (var i = 1; i < chars.Length; i++)
+            if (chars[i - 1] is not ('\'' or '-'))
+                chars[i] = char.ToLowerInvariant(chars[i]);
+        chars[0] = char.ToUpperInvariant(chars[0]);
+        return new string(chars);
+    }
 
     /// <summary>
     /// 語の間隔で、ひとつながりの語にまとめる。区切りは1文字ぶんの幅から決めるので、
@@ -496,6 +511,11 @@ public static partial class ResultParser
     /// </summary>
     private static string? ReadOutcome(List<VisualLine> above, double tableCenter)
     {
+        // いちばん確かなのは、表の上に大きく出る「チーム・○○の勝利！」の見出し。
+        // 欄の中の WIN / LOSE は字が小さく、下地との差も小さいので読めないことがある。
+        var headline = ReadHeadline(above);
+        if (headline is not null) return headline;
+
         var win = FindWord(above, "WIN");
         var lose = FindWord(above, "LOSE", "L0SE", "L05E", "LOSF");
         if (win is not null && lose is not null) return win < lose ? "win" : "lose";
@@ -511,6 +531,50 @@ public static partial class ResultParser
             : x < tableCenter;
         var foundWin = win is not null;
         return foundWin == onAstra ? "win" : "lose"; // 見つけた字が、アストラの欄にあったかどうか
+    }
+
+    /// <summary>
+    /// 「チーム・アンブラの勝利！」のような見出しから、アストラの勝敗を返す。
+    /// 隊の名前は1文字くらい読み違えても通るようにする（アンブラ → アンフラ など）。
+    /// </summary>
+    private static string? ReadHeadline(List<VisualLine> above)
+    {
+        foreach (var line in above)
+        {
+            var text = line.Text;
+            var at = text.IndexOf("勝利", StringComparison.Ordinal);
+            if (at < 4) continue;
+            var head = text[..at];
+            var toAstra = Nearest(head, "アストラ");
+            var toUmbra = Nearest(head, "アンブラ");
+            if (toAstra == toUmbra || Math.Min(toAstra, toUmbra) > 1) continue;
+            return toAstra < toUmbra ? "win" : "lose";
+        }
+        return null;
+
+        static int Nearest(string text, string name)
+        {
+            var best = int.MaxValue;
+            for (var i = 0; i + name.Length <= text.Length; i++)
+                best = Math.Min(best, TextLayout.Distance(text.Substring(i, name.Length), name));
+            return best;
+        }
+    }
+
+    /// <summary>
+    /// その語が出てくる、いちばん下の行での位置。
+    /// 隊の名前は表の上の見出し（「チーム・○○の勝利！」）にも出るので、
+    /// 素直に上から探すと、チーム欄ではなく見出しを拾ってしまう。
+    /// </summary>
+    private static TextHit? FindLowest(List<VisualLine> lines, string needle)
+    {
+        TextHit? best = null;
+        foreach (var line in lines)
+        {
+            var hit = TextLayout.Find(line, needle);
+            if (hit is not null && (best is null || hit.Value.Y > best.Value.Y)) best = hit;
+        }
+        return best;
     }
 
     /// <summary>語まるごとが targets のどれかと同じものを探して、その中心の X を返す。</summary>
@@ -569,14 +633,16 @@ public static partial class ResultParser
         if (label is null) return null;
         var (labelLine, hit) = label.Value;
         // 同じ行の右、またはすぐ下の行で、ラベルと横位置が重なる m:ss を探す
-        var candidates = above
-            .Where(l => l.CenterY >= labelLine.CenterY - 1 && l.CenterY <= labelLine.Bottom + hit.Height * 4)
-            .SelectMany(l => l.Words)
-            .Where(w => w.Right > hit.X - hit.Width && w.X < hit.Right + hit.Width * 2)
-            .OrderBy(w => w.Y).ThenBy(w => w.X);
-        foreach (var w in candidates)
+        // 1:43 は「1」「:」「43」と3つの語に割れて返ることがあるので、行ごとにつないでから探す
+        var lines = above.Where(l => l.CenterY >= labelLine.CenterY - 1 && l.CenterY <= labelLine.Bottom + hit.Height * 4);
+        foreach (var line in lines)
         {
-            var clock = ClockPattern().Match(TextLayout.Normalize(w.Text).Replace('.', ':'));
+            var text = string.Concat(line.Words
+                .Where(w => w.Right > hit.X - hit.Width && w.X < hit.Right + hit.Width * 2)
+                .OrderBy(w => w.X)
+                .Select(w => TextLayout.Normalize(w.Text)))
+                .Replace('.', ':');
+            var clock = ClockPattern().Match(text);
             if (clock.Success) return $"{int.Parse(clock.Groups[1].Value)}:{clock.Groups[2].Value}";
         }
         return null;

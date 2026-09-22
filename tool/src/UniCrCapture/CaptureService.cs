@@ -13,13 +13,12 @@ internal sealed class CaptureService(AppSettings settings)
     /// <summary>次の1試合だけに使うマップ（リザルト画面に出ないのでメニューで選ぶ）。保存したら消す。</summary>
     public string? NextMap { get; set; }
 
-    private string CapturesFolder => Path.Combine(settings.SaveFolder, "captures");
 
     public async Task<Outcome> ProcessAsync(BitmapSource image, DateTimeOffset at, string? existingFile = null)
     {
         // 画像は先に保存しておく（読み取りを直したあとに、読み直せるように）
         var imageName = existingFile is null ? $"cap_{at:yyyyMMdd_HHmmss}.png" : Path.GetFileName(existingFile);
-        var imagePath = existingFile ?? Path.Combine(CapturesFolder, imageName);
+        var imagePath = existingFile ?? Path.Combine(settings.ScreenshotsFolder, imageName);
         if (existingFile is null && settings.KeepImages) ScreenCapture.SavePng(image, imagePath);
 
         List<OcrWord> words;
@@ -45,7 +44,7 @@ internal sealed class CaptureService(AppSettings settings)
 
         if (!result.Success || result.Match is null)
         {
-            // うまく読めなかったときは、OCR の結果を画像の隣に残す（読み取りを直すための手がかり）
+            // うまく読めなかったときは、OCR の結果を「読み取りログ」に残す（原因を追うための手がかり）
             WriteOcrDump(imagePath, words, result);
             return new Outcome(false, "リザルト画面として読めませんでした", result.Errors.Concat(result.Warnings).ToList());
         }
@@ -53,7 +52,7 @@ internal sealed class CaptureService(AppSettings settings)
         var match = result.Match;
         var self = match.Players.First(p => p.Self);
         match.Owner = OwnerMark.For(match);
-        var store = new JsonlStore(settings.SaveFolder);
+        var store = new JsonlStore(settings.MatchesFolder);
         var written = store.Append(match, at);
         if (written) NextMap = null;
         if (result.Warnings.Count > 0) WriteOcrDump(imagePath, words, result);
@@ -99,7 +98,7 @@ internal sealed class CaptureService(AppSettings settings)
     {
         try
         {
-            var path = Path.ChangeExtension(imagePath, ".ocr.json");
+            var path = Path.Combine(settings.OcrLogFolder, Path.GetFileNameWithoutExtension(imagePath) + ".ocr.json");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, JsonSerializer.Serialize(new { result.Errors, result.Warnings, words }, DumpJson));
         }
