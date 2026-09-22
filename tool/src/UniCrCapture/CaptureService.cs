@@ -40,7 +40,7 @@ internal sealed class CaptureService(AppSettings settings)
             Map = NextMap,
             CapturedAt = at,
             SourceFile = imageName,
-            AppName = $"conflict-record-capture/{typeof(CaptureService).Assembly.GetName().Version?.ToString(3)}",
+            AppName = $"conflict-record-capture/{AppSettings.Version}",
         });
 
         if (!result.Success || result.Match is null)

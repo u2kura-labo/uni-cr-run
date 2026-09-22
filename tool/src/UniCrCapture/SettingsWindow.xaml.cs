@@ -15,6 +15,7 @@ public partial class SettingsWindow : Window
         _settings = settings;
         _overlay = overlay;
         InitializeComponent();
+        VersionText.Text = $"バージョン {AppSettings.Version}";
         SelfName.Text = settings.SelfName;
         SaveFolder.Text = settings.SaveFolder;
         HotkeyText.Text = settings.Hotkey;

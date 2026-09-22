@@ -14,6 +14,10 @@ internal sealed class AppSettings
     public double? ButtonLeft { get; set; }
     public double? ButtonTop { get; set; }
 
+    /// <summary>アプリのバージョン（exe のプロパティに出るものと同じ）。</summary>
+    public static string Version =>
+        typeof(AppSettings).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+
     public static string DefaultSaveFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Conflict Record");
 

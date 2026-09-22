@@ -6,7 +6,12 @@
         Background="{StaticResource Page}" Foreground="{StaticResource Text}"
         FontFamily="{StaticResource UiFont}" FontSize="13">
   <StackPanel Margin="22">
-    <TextBlock Text="SETTINGS" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="11"/>
+    <DockPanel>
+      <!-- 入れ替えたかどうかが分かるように、バージョンをここに出す -->
+      <TextBlock x:Name="VersionText" DockPanel.Dock="Right" VerticalAlignment="Center"
+                 Foreground="{StaticResource Text2}" FontSize="11"/>
+      <TextBlock Text="SETTINGS" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="11"/>
+    </DockPanel>
     <TextBlock Text="Conflict Record Capture の設定" FontSize="18" FontWeight="Bold" Margin="0,0,0,6"/>
     <TextBlock x:Name="Intro" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,14"
                Text="リザルト画面でボタン（またはホットキー）を押すと、FF14 の画面を撮って戦績を読み取り、保存フォルダの matches-日付.jsonl に追記します。"/>
