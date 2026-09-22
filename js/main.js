@@ -3,8 +3,8 @@ import { loadAll, addRecords, clearAll } from './store.js';
 import { MatchIndex } from './dedupe.js';
 import {
   applyFilter, summary, groupBy, peerComparison,
-  buildPlayerHistory, scoreMatch, selfScore, playerKey, selfKey, byTier, SCORE_SCALE,
-  ROLE_WEIGHTS, ROLE_LABELS, WINRATE_PRIOR,
+  buildPlayerHistory, buildDistribution, scoreMatch, selfScore, playerKey, selfKey, byTier,
+  PERF_WEIGHTS, PLAYER_WEIGHTS, ROLE_LABELS, WINRATE_PRIOR,
 } from './stats.js';
 import { lineChart, barChart, divergingChart, showTooltip, hideTooltip } from './charts.js';
 import { jobName, roleGroup } from './jobs.js';
@@ -56,6 +56,8 @@ async function reload() {
   state.matches = matches;
   state.broken = broken;
   state.historyCache = new Map();
+  // 成績の位置は、読み込んだ全データの全プレイヤーの中で出す
+  state.dist = buildDistribution(matches);
   pickDefaultChar();
   render();
 }
@@ -195,7 +197,7 @@ function pickDefaultChar() {
 function historyFor(char) {
   const key = char || '*';
   if (!state.historyCache.has(key)) {
-    state.historyCache.set(key, buildPlayerHistory(applyFilter(state.matches, { char })));
+    state.historyCache.set(key, buildPlayerHistory(applyFilter(state.matches, { char }), state.dist));
   }
   return state.historyCache.get(key);
 }
@@ -268,7 +270,7 @@ function renderHero(matches) {
 
   $('#hero').replaceChildren(
     stat('勝率', f.pct(sum.winRate, 1), `${sum.wins} 勝 ${sum.n - sum.wins} 敗・${sum.n} 試合`, 'lg'),
-    stat('スコア', f.int(avgScore(matches)), '50 = 同じ役割の平均', 'lg'),
+    stat('スコア', f.int(avgScore(matches)), '同じ役割の中の位置（50 = 真ん中）', 'lg'),
     stat('ランク', rank ?? '–', firstRank && firstRank !== rank ? `期間の最初 ${firstRank}` : ''),
     h('div', { class: 'stat' },
       h('div', { class: 'stat-label' }, '直近 5 試合'),
@@ -302,7 +304,7 @@ function jobChip(code) {
 }
 
 function avgScore(matches) {
-  const scores = matches.map(selfScore).filter((x) => x?.index != null);
+  const scores = matches.map((m) => selfScore(m, state.dist)).filter((x) => x?.score != null);
   const fair = scores.filter((x) => x.reliable);
   const xs = (fair.length ? fair : scores).map((x) => x.score);
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
@@ -502,34 +504,42 @@ function pastCell(p) {
   if (p.self) return '';
   const hist = state.history.get(playerKey(p));
   if (!hist || hist.n <= 1) return h('span', { class: 'muted' }, '初');
-  return h('span', { title: `${hist.confidence.label}（スコアは ${hist.indexN} 試合の平均）` }, `${hist.n} 戦・${f.int(hist.avgScore)}`);
+  return h('span', { title: `${hist.confidence.label}・スコア（実力・一緒のときの勝率・敵のときに負けた率）` }, `${hist.n} 戦・${f.int(hist.score)}`);
 }
 
 // ---------- スコアの内訳 ----------
 
 const PART_LABELS = { k: 'K', d: 'D', a: 'A', dmg: '与ダメ', taken: '被ダメ', heal: '与ヒール', crystal: '移送' };
 
+function weightText(weights, labels) {
+  return Object.entries(weights).map(([k, w]) => `${labels[k]} ${Math.round(w * 100)}%`).join('・');
+}
+
+const PERF_LABELS = { dmg: '与ダメ', d: 'デス（少ないほど良い）', k: 'キル', a: 'アシスト' };
+const PLAYER_LABELS = { perf: '実力', ally: '一緒のときの勝率', enemy: '敵のときにこっちが負けた率' };
+
 function scoreRuleText() {
-  return `スコア：その試合で、同じ役割（DPS・ヒーラー・タンク）の人と比べた成績を 0〜100 にしたもの。50 = 平均くらい、100 = めっちゃ強い（平均の ${SCORE_SCALE.ceil / 100} 倍以上）、0 = 弱い（平均の ${SCORE_SCALE.floor / 100} 倍以下）。* はジョブが分からず 10 人全員と比べた参考値。`;
+  return `試合のスコア：与ダメ・デス・キル・アシストが、読み込んだ全データの同じ役割（DPS・タンク・ヒーラー）の中で下から何 % の位置か（0〜100、50 = 真ん中）。重み：${weightText(PERF_WEIGHTS, PERF_LABELS)}。* はジョブが分からず全員の中で比べた参考値。`;
 }
 
-// 1 項目を「平均と比べてどうだったか」の文にする
+// 1 項目を「同じ役割の中でどのくらいの位置か」の文にする
 function partText(x) {
-  const label = PART_LABELS[x.key];
-  if (x.key === 'dmg' || x.key === 'heal' || x.key === 'taken') return `${label} 平均の ${Math.round((x.value / x.base) * 100)}%`;
-  if (x.key === 'crystal') return `${label} ${f.clock(x.value)}（平均 ${f.clock(x.base)}）`;
-  return `${label} ${x.value}（平均 ${f.dec(x.base)}）`;
+  const label = PERF_LABELS[x.key].replace('（少ないほど良い）', '');
+  const value = x.key === 'dmg' ? f.big(x.value) : x.value;
+  const place = x.pct >= 50 ? `上位 ${Math.max(1, Math.round(100 - x.pct))}%` : `下位 ${Math.max(1, Math.round(x.pct))}%`;
+  return `${label} ${value}（${place}）`;
 }
 
-// スコアの内訳：比べた相手と、良かった項目・悪かった項目
+// スコアの内訳：比べた相手と、項目ごとの位置
 function scoreReasonRows(sc) {
-  const highs = sc.parts.filter((x) => x.ratio >= 1.15).sort((a, b) => b.ratio - a.ratio).slice(0, 3);
-  const lows = sc.parts.filter((x) => x.ratio <= 0.85).sort((a, b) => a.ratio - b.ratio).slice(0, 3);
+  const sorted = [...sc.parts].sort((a, b) => b.pct - a.pct);
+  const highs = sorted.filter((x) => x.pct >= 65);
+  const lows = sorted.filter((x) => x.pct <= 35).reverse();
   return [
-    { value: `スコア ${f.int(sc.score)}`, label: sc.reliable ? `この試合の${ROLE_LABELS[sc.role]}（${sc.peers} 人）と比べて` : 'ジョブ不明のため 10 人全員と比べた参考値' },
+    { value: `スコア ${f.int(sc.score)}`, label: sc.reliable ? `全データの${ROLE_LABELS[sc.role]}（${sc.rows} 件）の中の位置` : `ジョブ不明のため、全員（${sc.rows} 件）の中の位置（参考）` },
     highs.length ? { value: '良かった', label: highs.map(partText).join('、') } : null,
     lows.length ? { value: '低かった', label: lows.map(partText).join('、') } : null,
-    !highs.length && !lows.length ? { value: '平均的', label: 'どの項目も平均に近い' } : null,
+    !highs.length && !lows.length ? { value: '真ん中くらい', label: sorted.map(partText).join('、') } : null,
   ].filter(Boolean);
 }
 
@@ -538,7 +548,7 @@ function scoreboard(m) {
     m.duration != null ? `経過時間 ${f.clock(m.duration)}` : null,
     m.rank?.before || m.rank?.after ? `${m.rank.before ?? '?'} → ${m.rank.after ?? '?'}` : null,
   ].filter(Boolean).join('・');
-  const scored = new Map(scoreMatch(m).map((x) => [x.player, x]));
+  const scored = new Map(scoreMatch(m, state.dist).map((x) => [x.player, x]));
   return h('div', { class: 'scoreboard' },
     meta ? h('p', { class: 'muted' }, meta) : null,
     m.warnings.length ? h('ul', { class: 'warn-list' }, m.warnings.map((w) => h('li', {}, w))) : null,
@@ -594,37 +604,21 @@ function relationText(g) {
 const enough = (n) => (n >= 3 ? 1 : 0);
 const trusted = (p) => p.confidence.level;
 const PLAYER_SORTS = {
-  n: { cmp: (a, b) => b.n - a.n || (b.avgScore ?? 0) - (a.avgScore ?? 0) },
-  allyBest: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (b.allyLift ?? -9) - (a.allyLift ?? -9) },
-  allyWorst: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (a.allyLift ?? 9) - (b.allyLift ?? 9) },
-  index: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (b.avgScore ?? 0) - (a.avgScore ?? 0) },
-  indexLow: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (a.avgScore ?? 999) - (b.avgScore ?? 999) },
+  n: { cmp: (a, b) => b.n - a.n || (b.score ?? 0) - (a.score ?? 0) },
+  allyBest: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (b.allyScore ?? -1) - (a.allyScore ?? -1) },
+  allyWorst: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (a.allyScore ?? 999) - (b.allyScore ?? 999) },
+  index: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (b.score ?? 0) - (a.score ?? 0) },
+  indexLow: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (a.score ?? 999) - (b.score ?? 999) },
 };
 
-// 勝率の差（ポイント）。+ は普段より勝っている
-function liftCell(v) {
-  if (v == null) return '–';
-  const pt = Math.round(v * 100);
-  const cls = pt >= 10 ? 'lift up' : pt <= -10 ? 'lift down' : 'lift';
-  return h('span', { class: cls }, `${pt > 0 ? '+' : ''}${pt} pt`);
-}
 
-// 指数と補正の決め方（プレイヤー欄の下に出す）
+// スコアの決め方（プレイヤー欄の下に出す）
 function indexExplanation() {
-  const keys = ['dmg', 'heal', 'taken', 'd', 'k', 'a'];
-  const roles = ['dps', 'healer', 'tank'];
   return h('details', { class: 'explain' },
-    h('summary', {}, 'スコアと「普段との差」の決め方'),
-    h('p', {}, `1 試合のスコア：その試合で、同じ役割（両チーム合わせて）の人の平均と項目ごとに比べ、役割ごとの重みで平均したものを 0〜100 にしたもの。50 = 平均くらい、100 = 平均の ${SCORE_SCALE.ceil / 100} 倍以上、0 = 平均の ${SCORE_SCALE.floor / 100} 倍以下。同じ試合の中で比べるので、試合の長さや荒れ具合に左右されません。D は少ないほど良い、移送時間は強さを表しにくいので使いません。`),
-    h('div', { class: 'table-scroll' }, h('table', { class: 'data compact' },
-      h('thead', {}, h('tr', {}, h('th', {}, '項目'), ...roles.map((r) => h('th', { class: 'num' }, ROLE_LABELS[r])))),
-      h('tbody', {}, keys.map((k) => h('tr', {},
-        h('td', {}, PART_LABELS[k]),
-        ...roles.map((r) => h('td', { class: 'num' }, ROLE_WEIGHTS[r][k] ? `${Math.round(ROLE_WEIGHTS[r][k] * 100)}%` : '–')),
-      ))),
-    )),
-    h('p', {}, 'プレイヤーのスコア：同じ役割の人と公平に比べられた試合（ジョブが分かっている試合）の平均。会った回数が多いほど信頼できます（参考：3 試合以下 / 中：4〜9 / 高：10 以上）。'),
-    h('p', {}, `普段との差：一緒のとき（敵のとき）の勝率を、試合数が少ないうちは普段の勝率に寄せて補正してから、普段の勝率と比べたもの（補正の強さ：${WINRATE_PRIOR} 試合分）。3 試合で 3 連勝しても大きな差にはならず、試合数が増えるほど実際の値に近づきます。`),
+    h('summary', {}, 'スコアの決め方'),
+    h('p', {}, scoreRuleText()),
+    h('p', {}, `プレイヤーのスコア：${weightText(PLAYER_WEIGHTS, PLAYER_LABELS)} を合わせたもの（0〜100）。実力はその人の試合のスコアの平均（ジョブが分かっている試合だけ）。味方・敵のどちらかになったことしかない人は、あるものだけで出します。`),
+    h('p', {}, `勝率は、試合数が少ないうちは普段の勝率に寄せて補正します（${WINRATE_PRIOR} 試合分）。3 試合で 3 連勝しても大きな値にはならず、試合数が増えるほど実際の値に近づきます。会った回数が多いほど信頼できます（参考：3 回以下 / 中：4〜9 / 高：10 以上）。`),
   );
 }
 
@@ -648,9 +642,10 @@ function renderPlayers() {
   $('#players-list').replaceChildren(h('div', { class: 'table-scroll' }, h('table', { class: 'data players' },
     h('thead', {}, h('tr', {},
       h('th', {}, 'キャラクター'), h('th', {}, 'ワールド'), h('th', {}, 'よく使うジョブ'),
-      h('th', { class: 'num' }, '会った回数'), h('th', { class: 'num' }, '一緒のときの勝率'), h('th', { class: 'num', title: '試合数が少ないうちは普段の勝率に寄せて補正した差' }, '普段との差'),
-      h('th', { class: 'num' }, '敵のときの自分の勝率'), h('th', { class: 'num', title: '試合数が少ないうちは普段の勝率に寄せて補正した差' }, '普段との差'),
-      h('th', { class: 'num', title: scoreRuleText() }, 'スコア'),
+      h('th', { class: 'num' }, '会った回数'), h('th', { class: 'num' }, '一緒のときの勝率'),
+      h('th', { class: 'num' }, '敵のときに負けた率'),
+      h('th', { class: 'num', title: '試合のスコアの平均' }, '実力'),
+      h('th', { class: 'num', title: '実力・一緒のときの勝率・敵のときに負けた率を合わせたもの' }, 'スコア'),
     )),
     h('tbody', {}, shown.map((p) => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openPlayer(p.key), onkeydown: (e) => { if (e.key === 'Enter') openPlayer(p.key); } },
       h('td', {}, p.name),
@@ -658,31 +653,25 @@ function renderPlayers() {
       h('td', {}, p.jobs.slice(0, 2).map((j) => jobName(j.job)).join('、')),
       h('td', { class: 'num' }, p.n),
       h('td', { class: 'num' }, p.allyN ? `${f.pct(p.allyWinRate)}（${p.allyN}）` : '–'),
-      h('td', { class: 'num' }, liftCell(p.allyLift)),
-      h('td', { class: 'num' }, p.enemyN ? `${f.pct(p.enemyWinRate)}（${p.enemyN}）` : '–'),
-      h('td', { class: 'num' }, liftCell(p.enemyLift)),
-      h('td', { class: 'num' }, scoreCell(p.avgScore, p.indexFair), h('span', { class: `conf c${p.confidence.level}`, title: `${p.confidence.label}（${p.indexN} 試合の平均）` })),
+      h('td', { class: 'num' }, p.enemyN ? `${f.pct(p.enemyLossRate)}（${p.enemyN}）` : '–'),
+      h('td', { class: 'num' }, f.int(p.perf), p.perfFair ? '' : '*'),
+      h('td', { class: 'num' }, scoreCell(p.score, p.perfFair), h('span', { class: `conf c${p.confidence.level}`, title: `${p.confidence.label}（${p.n} 回）` })),
     ))),
   )), list.length > shown.length ? h('p', { class: 'muted' }, `ほか ${list.length - shown.length} 人。名前で検索してください。`) : null, indexExplanation());
 }
 
-function liftText(v) {
-  if (v == null) return '–';
-  const pt = Math.round(v * 100);
-  return `${pt > 0 ? '+' : ''}${pt} pt`;
-}
 
 function openPlayer(key) {
   const p = state.history.get(key);
   if (!p) return;
   const dlg = $('#player-dialog');
   const verdict = p.confidence.level === 1
-    ? `${p.indexN} 試合だけなので、まだ参考程度です。`
-    : (p.avgScore >= 75 ? 'かなり強めです。'
-      : p.avgScore >= 55 ? '平均より少し上です。'
-      : p.avgScore >= 45 ? '平均くらいです。'
-      : p.avgScore >= 25 ? '平均より少し下です。'
-      : 'かなり弱めです。') + `（${p.confidence.label}・${p.indexN} 試合）`;
+    ? `${p.n} 回だけなので、まだ参考程度です。`
+    : (p.score >= 75 ? 'かなり強めです。'
+      : p.score >= 55 ? '平均より少し上です。'
+      : p.score >= 45 ? '平均くらいです。'
+      : p.score >= 25 ? '平均より少し下です。'
+      : 'かなり弱めです。') + `（${p.confidence.label}・${p.n} 回）`;
 
   dlg.querySelector('.dialog-body').replaceChildren(
     h('div', { class: 'dialog-head' },
@@ -693,12 +682,13 @@ function openPlayer(key) {
       h('button', { type: 'button', class: 'icon', 'aria-label': '閉じる', onclick: () => dlg.close() }, '×'),
     ),
     h('div', { class: 'stats small' },
-      kpi('スコア', f.int(p.avgScore), verdict),
+      kpi('スコア', f.int(p.score), verdict),
+      kpi('実力', f.int(p.perf), `試合のスコアの平均（${p.perfN} 試合）${p.perfFair ? '' : '・参考値'}`),
       kpi('会った回数', `${p.n} 回`, `味方 ${p.allyN}・敵 ${p.enemyN}`),
       kpi('一緒のときの勝率', p.allyN ? f.pct(p.allyWinRate) : '–',
-        p.allyN ? `${p.allyN} 試合・普段（${f.pct(p.myWinRate)}）より ${liftText(p.allyLift)}（補正後）` : '味方になったことなし'),
-      kpi('敵のときの自分の勝率', p.enemyN ? f.pct(p.enemyWinRate) : '–',
-        p.enemyN ? `${p.enemyN} 試合・普段より ${liftText(p.enemyLift)}（補正後）` : '敵になったことなし'),
+        p.allyN ? `${p.allyN} 試合（普段の勝率 ${f.pct(p.myWinRate)}）` : '味方になったことなし'),
+      kpi('敵のときに負けた率', p.enemyN ? f.pct(p.enemyLossRate) : '–',
+        p.enemyN ? `${p.enemyN} 試合（普段の負けた率 ${f.pct(1 - p.myWinRate)}）` : '敵になったことなし'),
       kpi('平均 K / D / A', `${f.dec(p.avg.k)} / ${f.dec(p.avg.d)} / ${f.dec(p.avg.a)}`),
     ),
     h('h3', {}, '出会った試合'),
