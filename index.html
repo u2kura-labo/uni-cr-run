@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>uni-cr-run</title>
+  <title>Conflict Record</title>
   <meta name="description" content="クリスタルコンフリクトの戦績ビューア。データはこのブラウザの中だけに保存されます。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,12 +27,13 @@
         <path d="M5 12h22" stroke="#fff" stroke-opacity=".35" stroke-width="1"/>
       </svg>
       <div>
-        <h1>uni-cr-run</h1>
+        <h1>Conflict Record</h1>
         <p class="muted">Crystalline Conflict Tracker</p>
       </div>
     </div>
     <div class="actions">
       <span id="count" class="muted"></span>
+      <a class="button secondary" href="https://github.com/u2kura-labo/uni-cr-run/releases/latest/download/ConflictRecordCapture.exe" title="リザルト画面を撮って matches-日付.jsonl を作る Windows 用ツール">キャプチャツール（Windows）</a>
       <button type="button" data-pick-file>JSONL を読み込む</button>
       <button type="button" id="clear" class="secondary" disabled>データを全削除</button>
       <button type="button" id="theme" class="icon" aria-label="ライト / ダーク切り替え" title="ライト / ダーク切り替え">◐</button>
@@ -45,12 +46,18 @@
 
     <section id="empty" class="empty" hidden>
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 1 27 12 16 31 5 12Z" fill="url(#crystal)"/><path d="M16 1 21 12 16 31 11 12Z" fill="#fff" opacity=".22"/></svg>
-      <h2>matches.jsonl をここにドロップ</h2>
+      <h2>matches-日付.jsonl をここにドロップ</h2>
       <p>読み込んだ戦績は、このブラウザの中（IndexedDB）にだけ保存されます。サーバーには送信しません。</p>
       <p>次からはページを開くだけで表示されます。新しい試合が増えたら、同じファイルをもう一度ドロップしてください（取り込み済みの試合は自動で飛ばします）。</p>
       <div class="empty-actions">
         <button type="button" data-pick-file>ファイルを選ぶ</button>
         <button type="button" id="sample" class="secondary">サンプルデータで試す</button>
+      </div>
+      <div class="tool-promo">
+        <h3>まだ JSONL がない？</h3>
+        <p>Windows 用の<strong>キャプチャツール</strong>を起動しておくと、FF14 の画面に小さなボタンが出ます。リザルト画面で押すだけで、戦績が <code>matches-日付.jsonl</code> に保存されます。</p>
+        <p class="muted small">画面を撮って文字認識で読むだけで、ゲームのメモリや通信には触れません。インストール不要の exe です（初回は「PC が保護されました」→「詳細情報」→「実行」）。</p>
+        <a class="button" href="https://github.com/u2kura-labo/uni-cr-run/releases/latest/download/ConflictRecordCapture.exe">キャプチャツールをダウンロード</a>
       </div>
     </section>
 

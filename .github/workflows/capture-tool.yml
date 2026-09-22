@@ -1,0 +1,58 @@
+# キャプチャツール（Windows アプリ）のビルド。
+# - main への push / PR：テストして exe を作り、Actions の成果物に置く
+# - tool-v* のタグ（例：tool-v0.1.0）：さらに GitHub Releases に exe を公開する
+#   ビューアのダウンロードボタンは releases/latest を指すので、公開すれば自動で最新版になる
+name: capture-tool
+
+on:
+  push:
+    branches: [main]
+    paths: ['tool/**', '.github/workflows/capture-tool.yml']
+    tags: ['tool-v*']
+  pull_request:
+    paths: ['tool/**', '.github/workflows/capture-tool.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: tool
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: バージョンを決める
+        id: version
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_NAME -like 'tool-v*') { $env:GITHUB_REF_NAME -replace '^tool-v', '' } else { '0.0.0' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: テスト
+        run: dotnet test tests/UniCrCapture.Core.Tests -c Release
+
+      - name: exe を作る
+        run: dotnet publish src/UniCrCapture/UniCrCapture.csproj -c Release -o publish -p:Version=${{ steps.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConflictRecordCapture
+          path: tool/publish/ConflictRecordCapture.exe
+
+      - name: GitHub Releases に公開
+        if: startsWith(github.ref, 'refs/tags/tool-v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME publish/ConflictRecordCapture.exe `
+            --title "Conflict Record Capture $env:GITHUB_REF_NAME" `
+            --notes-file RELEASE_NOTES.md

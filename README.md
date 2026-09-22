@@ -1,6 +1,10 @@
-# uni-cr-run
+# Conflict Record
 
-FF14 クリスタルコンフリクトの戦績ビューア。
+FF14 クリスタルコンフリクトの戦績ビューアとキャプチャツール。リポジトリ名は `uni-cr-run`。
+
+## ビューア
+
+ブラウザで動く戦績ビューア（https://u2kura-labo.github.io/uni-cr-run/）。
 
 リザルト画面のキャプチャから作った `matches.jsonl` をブラウザにドロップすると、次のものを表示する。
 
@@ -13,6 +17,11 @@ FF14 クリスタルコンフリクトの戦績ビューア。
 - 2回目以降はページを開くだけで前回の続きが表示される
 - 同じ試合は二重に取り込まない（下の「重複の扱い」）
 - 元データはあくまで手元の `matches.jsonl`。ブラウザのデータを消しても、ドロップし直せば戻る
+
+## キャプチャツール（Windows）
+
+`matches-日付.jsonl` は、Windows 用のキャプチャツールで作る。FF14 の画面に小さなボタンを出しておき、リザルト画面で押すと、画面を撮って文字認識で読み、JSONL に追記する。
+ダウンロードはビューアの「キャプチャツール（Windows）」ボタンか [Releases](https://github.com/u2kura-labo/uni-cr-run/releases/latest) から。詳しくは [tool/README.md](tool/README.md)。
 
 ## パフォーマンス指数
 
@@ -51,6 +60,7 @@ python3 -m http.server 8000
 | `js/stats.js` | 集計（勝率、グループ別、同ジョブ比較） |
 | `js/charts.js` | SVG のグラフ |
 | `js/jobs.js` | ジョブの略称と日本語名 |
+| `tool/` | キャプチャツール（Windows アプリ、C# / .NET 8） |
 | `sample/matches.sample.jsonl` | サンプル（架空の 40 人と当たるダミー 72 試合 + 実際のリザルト画面から読んだ 1 試合。実在のプレイヤー名は伏せてある） |
 
 ## JSONL の形式（v1）

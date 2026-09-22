@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Windows の OCR（Windows.Media.Ocr）を使うので、Windows 10 2004 以降の API を参照する -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Linux / macOS でもビルドの確認だけはできるように -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AssemblyName>ConflictRecordCapture</AssemblyName>
+    <RootNamespace>UniCrCapture</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Conflict Record Capture</Product>
+    <Description>クリスタルコンフリクトのリザルト画面を撮って、戦績を JSONL に保存するツール</Description>
+  </PropertyGroup>
+
+  <!-- 配布用：.NET を入れていない PC でも動く、1 ファイルの exe -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF では System.IO が暗黙の using から外れる（Shapes.Path と名前がぶつかるため）ので、明示する -->
+    <Using Include="System.IO" />
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UniCrCapture.Core\UniCrCapture.Core.csproj" />
+  </ItemGroup>
+
+</Project>
