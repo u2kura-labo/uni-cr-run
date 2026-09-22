@@ -48,7 +48,9 @@ internal static class WindowsOcr
 
         var crop = new CroppedBitmap(image, new Int32Rect(x, y, w, h));
         crop.Freeze();
-        var n = Math.Clamp(zoom, 1, Math.Max(1, OcrEngine.MaxImageDimension / Math.Max(w, h)));
+        // 拡大しすぎて OCR の上限を超えないようにする（MaxImageDimension は uint）
+        var limit = (int)Math.Max(1, (double)OcrEngine.MaxImageDimension / Math.Max(w, h));
+        var n = Math.Clamp(zoom, 1, limit);
         var words = await ReadBgraAsync(Enlarge(ScreenCapture.ToBgra(crop), n));
         return words
             .Select(t => t with { X = t.X / n + x, Y = t.Y / n + y, Width = t.Width / n, Height = t.Height / n })
