@@ -84,6 +84,106 @@ public class ResultParserTests
             r.Match!.Players.Select(p => (p.Name, p.K, p.D, p.A, p.Dmg, p.Crystal ?? "")));
     }
 
+    /// <summary>
+    /// 実際に起きた読み落とし：チーム欄の K/D/A 合計が読めず、WIN も読めず、LOSE だけ読めた画面。
+    /// 合計が読めないだけで勝敗まで捨ててしまうと、試合ごと保存できなくなる。
+    /// </summary>
+    [Fact]
+    public void DecidesWinLoseFromTheLoseWordAloneWhenTeamTotalsAreUnreadable()
+    {
+        var screen = FakeScreen.Build(opt: new FakeScreen.Options
+        {
+            NoWinWord = true,
+            AstraKda = "ロ:ロ ロ:ロ ロ:ロ",
+            UmbraKda = "ロ:ロ ロ:ロ ロ:ロ",
+        });
+        var r = Parse(screen);
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Equal("win", r.Match!.Teams["astra"].Result);
+        Assert.Equal("lose", r.Match.Teams["umbra"].Result);
+        // 合計は読めなかったので、各プレイヤーの合計で埋める
+        Assert.Contains(r.Warnings, w => w.Contains("astra のチーム合計が読めなかった"));
+        Assert.Equal((18, 16, 54), (r.Match.Teams["astra"].K, r.Match.Teams["astra"].D, r.Match.Teams["astra"].A));
+    }
+
+    /// <summary>
+    /// 実際に起きた読み落とし：K と D の列が1桁ずつ離れて並ぶため、画面ぜんぶを1枚で渡すと
+    /// 10行ぜんぶ落ちる。SmallNumberArea が返す範囲を拡大して読み直せば、元どおりになる。
+    /// </summary>
+    [Fact]
+    public void RereadingTheSmallNumberAreaRecoversDroppedKAndD()
+    {
+        var screen = FakeScreen.Build(opt: new FakeScreen.Options { DropKdValues = true });
+
+        var first = Parse(screen);
+        Assert.True(first.Success, string.Join("\n", first.Errors));
+        Assert.Contains(first.Warnings, w => w.Contains("の K を読めませんでした"));
+        Assert.Contains(first.Warnings, w => w.Contains("の D を読めませんでした"));
+
+        var area = ResultParser.SmallNumberArea(screen.Words);
+        Assert.NotNull(area);
+        // K〜A の3列だけを指していて、となりの階級・総与ダメージ量の文字は入らない
+        Assert.All(screen.Words.Where(w => area!.Value.Holds(w)), w => Assert.Contains(w.Text, new[] { "K", "D", "A" }.Concat(
+            FakeScreen.RealMatch().Select(p => p.A.ToString())).ToArray()));
+
+        var reread = ResultParser.ReplaceArea(screen.Words, area!.Value, FakeScreen.KdaWords());
+        var second = ResultParser.Parse(reread, screen, new ParseOptions { SelfName = "Kinako Mochi", CapturedAt = At });
+
+        Assert.True(second.Success, string.Join("\n", second.Errors));
+        Assert.Empty(second.Warnings);
+        Assert.Equal(FakeScreen.RealMatch().Select(p => (p.Name, p.K, p.D, p.A)),
+            second.Match!.Players.Select(p => (p.Name, p.K, p.D, p.A)));
+    }
+
+    /// <summary>
+    /// 実際に起きた読み違い：日本語で読ませているので、名前とワールドの中の r が「 になり、
+    /// そこで語まで切れる（Kura → "Ku" "「" "a"）。切れたままだと自分の行も見つからない。
+    /// </summary>
+    [Fact]
+    public void PutsNamesBackTogetherWhenRIsMisreadAsABracket()
+    {
+        var r = Parse(FakeScreen.Build(opt: new FakeScreen.Options { MisreadR = true }));
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Empty(r.Warnings); // 自分の行も名前で見つかる（ハイライトに頼らない）
+        var expected = FakeScreen.RealMatch();
+        Assert.Equal(expected.Select(e => (e.Name, e.World)), r.Match!.Players.Select(p => (p.Name, p.World)));
+        Assert.True(r.Match.Players.Single(p => p.Self).Name == "Kinako Mochi");
+    }
+
+    /// <summary>
+    /// FF14 の名前で大文字になるのは先頭と ' - の次だけ、という決まりを手がかりに直す。
+    /// 全部大文字の語は読み違い（Ko → KO）、小文字のあとの大文字は空白の読み落とし。
+    /// </summary>
+    [Fact]
+    public void FixesNamesThatWereReadInAllCapitalsOrLostTheirSpace()
+    {
+        var players = FakeScreen.RealMatch();
+        players[0] = players[0] with { Name = "Maple CUSTARD" };  // Custard → CUSTARD
+        players[1] = players[1] with { Name = "YuzuPon" };        // Yuzu Pon → YuzuPon
+        var r = Parse(FakeScreen.Build(players));
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Equal("Maple Custard", r.Match!.Players[0].Name);
+        Assert.Equal("Yuzu Pon", r.Match.Players[1].Name);
+    }
+
+    /// <summary>
+    /// 実際に起きた取り違え：画面の左のチャットが表の行と同じ高さにあると、
+    /// 名前の欄に入り込んで、名前が「(3St-valkyrieAi Tiamat Uni Ku」のようになっていた。
+    /// </summary>
+    [Fact]
+    public void IgnoresTheChatNextToTheTable()
+    {
+        var r = Parse(FakeScreen.Build(opt: new FakeScreen.Options { ChatOnTheLeft = true }));
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Empty(r.Warnings);
+        Assert.Equal(FakeScreen.RealMatch().Select(e => (e.Name, e.World)),
+            r.Match!.Players.Select(p => (p.Name, p.World)));
+    }
+
     [Fact]
     public void WarnsWhenTeamTotalsDoNotAddUp()
     {

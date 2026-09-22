@@ -26,6 +26,7 @@ internal sealed class CaptureService(AppSettings settings)
         try
         {
             words = await WindowsOcr.RecognizeAsync(image);
+            words = await RereadSmallNumbersAsync(image, words);
         }
         catch (Exception e)
         {
@@ -64,6 +65,24 @@ internal sealed class CaptureService(AppSettings settings)
         details.AddRange(result.Warnings.Select(w => "要確認：" + w));
         var title = !written ? "保存済みの試合です" : result.Warnings.Count > 0 ? "保存しました（要確認あり）" : "保存しました";
         return new Outcome(true, title, details);
+    }
+
+    /// <summary>
+    /// K / D / A の列だけを切り出して 4 倍に拡大し、読み直したもので置き換える。
+    /// 1桁の数字が離れて並ぶだけの列は、画面ぜんぶを1枚で渡すと Windows の文字認識が
+    /// 丸ごと落とすことがあるが、その部分だけを大きくすれば読める。
+    /// </summary>
+    private static async Task<List<OcrWord>> RereadSmallNumbersAsync(BitmapSource image, List<OcrWord> words)
+    {
+        var area = ResultParser.SmallNumberArea(words);
+        if (area is null) return words;
+        // 文字の高さが 48 画素くらいになるまで拡大する。倍率を決め打ちにすると、
+        // スクリーンショットの大きさ（解像度）が変わったときに効き目が変わってしまう。
+        var heights = words.Where(area.Value.Holds).Select(w => w.Height).OrderBy(h => h).ToList();
+        var textHeight = heights.Count > 0 ? heights[heights.Count / 2] : 0;
+        var zoom = textHeight > 0 ? Math.Clamp(48 / textHeight, 2.0, 8.0) : 4.0;
+        var reread = await WindowsOcr.RecognizeAreaAsync(image, area.Value, zoom, (int)Math.Max(8, textHeight));
+        return reread.Count == 0 ? words : ResultParser.ReplaceArea(words, area.Value, reread);
     }
 
     private static readonly JsonSerializerOptions DumpJson = new()

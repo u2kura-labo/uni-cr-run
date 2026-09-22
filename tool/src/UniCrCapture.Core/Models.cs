@@ -11,6 +11,14 @@ public sealed record OcrWord(string Text, double X, double Y, double Width, doub
     public double CenterY => Y + Height / 2;
 }
 
+/// <summary>画像の中の四角（ピクセル座標）。読み直したい範囲を指すのに使う。</summary>
+public readonly record struct PixelRect(double X, double Y, double Width, double Height)
+{
+    public double Right => X + Width;
+    public double Bottom => Y + Height;
+    public bool Holds(OcrWord w) => w.CenterX >= X && w.CenterX < Right && w.CenterY >= Y && w.CenterY < Bottom;
+}
+
 /// <summary>キャプチャ画像の画素を読むためのもの。チームの色と自分の行のハイライトの判定に使う。</summary>
 public interface IPixelSource
 {

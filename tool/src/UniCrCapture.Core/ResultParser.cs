@@ -61,7 +61,8 @@ public static partial class ResultParser
         // ---------- 3. 見出しより上 ----------
         var above = lines.Where(l => l.Bottom < headerLine.Top).ToList();
         var tableCenter = (centers[Col.Name] + centers[Col.Crystal]) / 2;
-        var teams = ReadTeams(above, tableCenter, result);
+        var teams = ReadTeams(above, tableCenter, out var totalsRead);
+        var outcome = ReadOutcome(above, tableCenter);
         var rank = ReadRank(above);
         var duration = ReadDuration(above);
 
@@ -102,12 +103,19 @@ public static partial class ResultParser
         // チームの情報が読めなかった部分を、プレイヤーから補う
         foreach (var t in new[] { "astra", "umbra" })
         {
-            if (!teams.TryGetValue(t, out var team))
-            {
-                var members = players.Where(p => p.Team == t).ToList();
-                teams[t] = team = new TeamRecord { K = members.Sum(p => p.K), D = members.Sum(p => p.D), A = members.Sum(p => p.A) };
-                result.Warnings.Add($"{t} のチーム合計が読めなかったので、個人の合計を使いました。");
-            }
+            if (!teams.TryGetValue(t, out var team)) teams[t] = team = new TeamRecord();
+            if (totalsRead.Contains(t)) continue;
+            var members = players.Where(p => p.Team == t).ToList();
+            team.K = members.Sum(p => p.K);
+            team.D = members.Sum(p => p.D);
+            team.A = members.Sum(p => p.A);
+            result.Warnings.Add($"{t} のチーム合計が読めなかったので、個人の合計を使いました。");
+        }
+        // WIN / LOSE の語の位置から決めたほうが確かなので、そちらを優先する
+        if (outcome is not null)
+        {
+            teams["astra"].Result = outcome;
+            teams["umbra"].Result = outcome == "win" ? "lose" : "win";
         }
         FillResults(teams, result);
         if (result.Errors.Count > 0) return result;
@@ -140,6 +148,52 @@ public static partial class ResultParser
         match.Id = ContentId(match);
         result.Match = match;
         return result;
+    }
+
+    // ---------- 拡大して読み直す範囲 ----------
+
+    /// <summary>
+    /// K / D / A の列の範囲を返す（なければ null）。
+    ///
+    /// この3列は1桁の数字が離れて並ぶだけなので、画面ぜんぶを1枚の画像として渡すと
+    /// Windows の文字認識が丸ごと取りこぼすことがある（10行すべての K と D が落ちる例がある）。
+    /// 呼ぶ側は、この範囲だけを切り出して拡大し、読み直した語で ReplaceArea する。
+    /// </summary>
+    public static PixelRect? SmallNumberArea(IReadOnlyList<OcrWord> words)
+    {
+        var lines = TextLayout.GroupLines(words);
+        var header = FindHeader(lines);
+        if (header is null) return null;
+        var (headerLine, centers) = header.Value;
+        var rowHeight = headerLine.Words.Average(w => w.Height);
+        var bounds = ColumnBounds(centers);
+        var rows = ReadRows(lines, headerLine.Bottom, rowHeight, bounds);
+        if (rows.Count == 0) return null;
+
+        // K・D・A の間隔から、3列ぶんの幅を見当づける
+        var step = (centers[Col.A] - centers[Col.K]) / 2;
+        if (step <= 0) return null;
+        var left = centers[Col.K] - step * 0.8;
+        var right = centers[Col.A] + step * 0.8;
+
+        // 隣の列（階級・総与ダメージ量）の文字まで巻き込まないように、読めている語の位置でせばめる
+        var tierRight = rows.SelectMany(r => r.Cells[Col.Tier]).Select(w => w.Right).DefaultIfEmpty(double.MinValue).Max();
+        var dmgLeft = rows.SelectMany(r => r.Cells[Col.Dmg]).Select(w => w.X).DefaultIfEmpty(double.MaxValue).Min();
+        left = Math.Max(left, tierRight + 1);
+        right = Math.Min(right, dmgLeft - 1);
+        if (right - left < step) return null; // せばまりすぎたら、読み直さない
+
+        var top = headerLine.Top;
+        var bottom = rows[^1].Bottom;
+        return new PixelRect(left, top, right - left, bottom - top);
+    }
+
+    /// <summary>area の中の語を、読み直した語で置き換える。</summary>
+    public static List<OcrWord> ReplaceArea(IReadOnlyList<OcrWord> words, PixelRect area, IEnumerable<OcrWord> reread)
+    {
+        var merged = words.Where(w => !area.Holds(w)).ToList();
+        merged.AddRange(reread.Where(area.Holds));
+        return merged;
     }
 
     // ---------- 見出し ----------
@@ -192,14 +246,23 @@ public static partial class ResultParser
         return null;
     }
 
+    /// <summary>
+    /// 列ごとの左右の範囲。となりの列との中間で区切る。
+    /// 両端は、いちばん外の列と同じ幅ぶんだけ外に広げたところで止める
+    /// （止めないと、画面の左にあるチャットや、右にあるパーティ一覧の文字まで表の中に入ってしまう）。
+    /// </summary>
     private static Dictionary<Col, (double Left, double Right)> ColumnBounds(Dictionary<Col, double> centers)
     {
         var order = Enum.GetValues<Col>().OrderBy(c => centers[c]).ToList();
         var bounds = new Dictionary<Col, (double, double)>();
         for (var i = 0; i < order.Count; i++)
         {
-            var left = i == 0 ? double.MinValue : (centers[order[i - 1]] + centers[order[i]]) / 2;
-            var right = i == order.Count - 1 ? double.MaxValue : (centers[order[i]] + centers[order[i + 1]]) / 2;
+            var left = i == 0
+                ? centers[order[0]] - (centers[order[1]] - centers[order[0]])
+                : (centers[order[i - 1]] + centers[order[i]]) / 2;
+            var right = i == order.Count - 1
+                ? centers[order[^1]] + (centers[order[^1]] - centers[order[^2]])
+                : (centers[order[i]] + centers[order[i + 1]]) / 2;
             bounds[order[i]] = (left, right);
         }
         return bounds;
@@ -213,7 +276,6 @@ public static partial class ResultParser
         public List<OcrWord> NameWords => Cells[Col.Name];
         public double Top { get; set; } = double.MaxValue;
         public double Bottom { get; set; } = double.MinValue;
-        public string Text(Col c) => string.Join(" ", Cells[c].OrderBy(w => w.X).Select(w => w.Text));
         public string Joined(Col c) => string.Concat(Cells[c].OrderBy(w => w.X).Select(w => w.Text));
     }
 
@@ -226,8 +288,11 @@ public static partial class ResultParser
             var row = new Row();
             foreach (var w in line.Words)
             {
-                var col = bounds.First(b => w.CenterX >= b.Value.Left && w.CenterX < b.Value.Right).Key;
-                row.Cells[col].Add(w);
+                // 表の外（同じ高さにあるチャットなど）は入れない
+                var col = bounds.Where(b => w.CenterX >= b.Value.Left && w.CenterX < b.Value.Right)
+                    .Select(b => (Col?)b.Key).FirstOrDefault();
+                if (col is null) continue;
+                row.Cells[col.Value].Add(w);
                 row.Top = Math.Min(row.Top, w.Y);
                 row.Bottom = Math.Max(row.Bottom, w.Bottom);
             }
@@ -243,7 +308,7 @@ public static partial class ResultParser
 
     private static PlayerRecord? ToPlayer(Row row, ParseResult result)
     {
-        var name = CleanName(row.Text(Col.Name));
+        var name = CleanName(row.NameWords);
         if (name.Length == 0)
         {
             result.Warnings.Add("名前を読めない行がありました（その行は飛ばしました）。");
@@ -272,7 +337,7 @@ public static partial class ResultParser
         return new PlayerRecord
         {
             Name = name,
-            World = CleanWorld(row.Text(Col.World)),
+            World = CleanWorld(row.Cells[Col.World]),
             Tier = MatchTier(row.Joined(Col.Tier)) ?? "",
             K = Int(Col.K),
             D = Int(Col.D),
@@ -284,20 +349,67 @@ public static partial class ResultParser
         };
     }
 
-    /// <summary>名前は「英字で始まる語」だけをつなぐ（左のジョブアイコンが記号として読まれることがあるため）。</summary>
-    private static string CleanName(string raw)
+    /// <summary>
+    /// 日本語で読ませているせいで、名前の中の r が「 になることがある（Kura → "Ku" "「" "a"）。
+    /// 「 のところで語も切れてしまうので、戻す。
+    /// </summary>
+    private static string Latin(string text) => TextLayout.Normalize(text).Replace('「', 'r').Replace('｢', 'r');
+
+    /// <summary>
+    /// 名前を組み立てる。OCR は1つの名前を途中で切って返すことがあるので、
+    /// 語の間隔が「1文字ぶんよりずっと狭い」ところはつなぎ直し、広いところだけを空白にする。
+    /// 記号だけの語（ジョブのアイコンが読まれたもの）は捨てる。
+    /// </summary>
+    private static string CleanName(IReadOnlyList<OcrWord> words)
     {
-        var parts = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        return string.Join(" ", Join(words)
             .Select(p => NameTrim().Replace(p, ""))
+            // 小文字のすぐあとの大文字は、空白を読み落としたしるし
+            // （FF14 の名前で大文字になるのは、先頭と ' - の次だけ）
+            .SelectMany(p => LostSpace().Split(p))
             .Where(p => p.Length >= 2 && char.IsLetter(p[0]))
-            .ToList();
-        return string.Join(" ", parts);
+            .Select(FixCase));
     }
 
-    private static string CleanWorld(string raw)
+    /// <summary>ワールド名は1語なので、間隔に関係なくつなぐ。</summary>
+    private static string CleanWorld(IReadOnlyList<OcrWord> words)
     {
-        var s = WorldTrim().Replace(raw, "");
+        var s = WorldTrim().Replace(string.Concat(words.OrderBy(w => w.X).Select(w => Latin(w.Text))), "");
         return s.Length == 0 ? "" : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// FF14 の名前は、先頭（と ' - の次）以外は小文字なので、全部大文字の語は読み違い。
+    /// KO → Ko のように直す。
+    /// </summary>
+    private static string FixCase(string part) =>
+        part.Any(char.IsLower) ? part : char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant();
+
+    /// <summary>
+    /// 語の間隔で、ひとつながりの語にまとめる。区切りは1文字ぶんの幅から決めるので、
+    /// スクリーンショットの大きさが変わっても同じように働く。
+    /// </summary>
+    private static List<string> Join(IReadOnlyList<OcrWord> words)
+    {
+        var ordered = words.Where(w => Latin(w.Text).Length > 0).OrderBy(w => w.X).ToList();
+        if (ordered.Count == 0) return new List<string>();
+        var charWidth = ordered.Sum(w => w.Width) / ordered.Sum(w => Latin(w.Text).Length);
+
+        var parts = new List<string>();
+        var current = new StringBuilder();
+        var prevRight = 0.0;
+        foreach (var w in ordered)
+        {
+            if (current.Length > 0 && w.X - prevRight > charWidth * 0.35)
+            {
+                parts.Add(current.ToString());
+                current.Clear();
+            }
+            current.Append(Latin(w.Text));
+            prevRight = w.Right;
+        }
+        parts.Add(current.ToString());
+        return parts;
     }
 
     public static string? MatchTier(string raw)
@@ -326,39 +438,100 @@ public static partial class ResultParser
 
     // ---------- 見出しより上：チーム・ランク・経過時間 ----------
 
-    private static Dictionary<string, TeamRecord> ReadTeams(List<VisualLine> above, double tableCenter, ParseResult result)
+    /// <summary>
+    /// 左右のチーム欄を読む。K/D/A の合計・勝敗・進行度は、どれか1つが読めなくても
+    /// 残りは使えるように、別々に見る（合計が読めないだけで勝敗まで捨てないため）。
+    /// totalsRead には、K/D/A の合計を実際に読めたチームだけが入る。
+    /// </summary>
+    private static Dictionary<string, TeamRecord> ReadTeams(List<VisualLine> above, double tableCenter, out HashSet<string> totalsRead)
     {
         var teams = new Dictionary<string, TeamRecord>();
+        totalsRead = new HashSet<string>();
         foreach (var (team, isLeft) in new[] { ("astra", true), ("umbra", false) })
         {
-            var text = string.Concat(above.Select(l =>
-                new string(l.Glyphs.Where(g => isLeft ? g.CenterX < tableCenter : g.CenterX >= tableCenter).Select(g => g.C).ToArray())));
+            // 左右は語の中心で分ける（文字の中心で分けると、真ん中にある語が途中で切れてしまう）
+            var text = string.Concat(above
+                .SelectMany(l => l.Words)
+                .Where(w => isLeft ? w.CenterX < tableCenter : w.CenterX >= tableCenter)
+                .Select(w => TextLayout.Normalize(w.Text)));
+            var rec = new TeamRecord();
+            var any = false;
+
             var kda = KdaPattern().Match(text);
-            if (!kda.Success) continue;
-            var rec = new TeamRecord
+            if (kda.Success)
             {
-                K = int.Parse(TextLayout.DigitsOnly(kda.Groups[1].Value)),
-                D = int.Parse(TextLayout.DigitsOnly(kda.Groups[2].Value)),
-                A = int.Parse(TextLayout.DigitsOnly(kda.Groups[3].Value)),
-            };
+                rec.K = int.Parse(TextLayout.DigitsOnly(kda.Groups[1].Value));
+                rec.D = int.Parse(TextLayout.DigitsOnly(kda.Groups[2].Value));
+                rec.A = int.Parse(TextLayout.DigitsOnly(kda.Groups[3].Value));
+                totalsRead.Add(team);
+                any = true;
+            }
+
             var upper = text.ToUpperInvariant();
-            if (upper.Contains("WIN")) rec.Result = "win";
-            else if (upper.Contains("LOSE") || upper.Contains("L0SE")) rec.Result = "lose";
+            if (upper.Contains("WIN")) { rec.Result = "win"; any = true; }
+            else if (upper.Contains("LOSE") || upper.Contains("L0SE")) { rec.Result = "lose"; any = true; }
+
             var progress = ProgressPattern().Match(text);
             if (progress.Success && double.TryParse(progress.Groups[1].Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var pr))
+            {
                 rec.Progress = pr;
-            teams[team] = rec;
+                any = true;
+            }
+
+            if (any) teams[team] = rec;
         }
         return teams;
     }
 
-    /// <summary>片方の勝敗しか読めなかったら、もう片方は反対にする。</summary>
+    /// <summary>
+    /// WIN / LOSE の語を探して、アストラ（左のチーム欄）の勝敗を返す。
+    /// 両方見つかれば左右の並びだけで決まるので、欄の境目がどこかに関係なく決まる。
+    /// 片方しか読めなかったときは、チーム名の位置（なければ表の中心）でどちらの欄かを決める。
+    /// </summary>
+    private static string? ReadOutcome(List<VisualLine> above, double tableCenter)
+    {
+        var win = FindWord(above, "WIN");
+        var lose = FindWord(above, "LOSE", "L0SE", "L05E", "LOSF");
+        if (win is not null && lose is not null) return win < lose ? "win" : "lose";
+        if (win is null && lose is null) return null;
+
+        // 片方しか読めないときは、どちらの欄にある字かを決める。
+        // チーム名が両方読めていればそこからの近さで、読めていなければ表の中心で分ける。
+        var x = win ?? lose!.Value;
+        var astraAt = TextLayout.FindInLines(above, "アストラ")?.Hit.CenterX;
+        var umbraAt = TextLayout.FindInLines(above, "アンブラ")?.Hit.CenterX;
+        var onAstra = astraAt is not null && umbraAt is not null
+            ? Math.Abs(x - astraAt.Value) <= Math.Abs(x - umbraAt.Value)
+            : x < tableCenter;
+        var foundWin = win is not null;
+        return foundWin == onAstra ? "win" : "lose"; // 見つけた字が、アストラの欄にあったかどうか
+    }
+
+    /// <summary>語まるごとが targets のどれかと同じものを探して、その中心の X を返す。</summary>
+    private static double? FindWord(List<VisualLine> lines, params string[] targets)
+    {
+        foreach (var line in lines)
+        foreach (var w in line.Words)
+        {
+            var t = TextLayout.Normalize(w.Text).ToUpperInvariant();
+            if (Array.IndexOf(targets, t) >= 0) return w.CenterX;
+        }
+        return null;
+    }
+
+    /// <summary>片方の勝敗しか読めなかったら、もう片方は反対にする。どちらも読めなければ進行度で決める。</summary>
     private static void FillResults(Dictionary<string, TeamRecord> teams, ParseResult result)
     {
         var a = teams["astra"];
         var u = teams["umbra"];
         if (a.Result == "" && u.Result != "") a.Result = u.Result == "win" ? "lose" : "win";
         if (u.Result == "" && a.Result != "") u.Result = a.Result == "win" ? "lose" : "win";
+        if (a.Result == "" && u.Result == "" && a.Progress is { } ap && u.Progress is { } up && Math.Abs(ap - up) > 0.5)
+        {
+            a.Result = ap > up ? "win" : "lose";
+            u.Result = ap > up ? "lose" : "win";
+            result.Warnings.Add("WIN / LOSE を読めなかったので、進行度から勝敗を決めました。");
+        }
         if (a.Result == "" || u.Result == "" || a.Result == u.Result)
             result.Errors.Add("勝敗（WIN / LOSE）を読み取れませんでした。");
     }
@@ -501,8 +674,11 @@ public static partial class ResultParser
     [GeneratedRegex(@"(ブロンズ|シルバー|ゴールド|プラチナ|ダイヤモンド|クリスタル|[ァ-ヶー]{3,6})(\d?)([★☆]*)")]
     private static partial Regex RankPattern();
 
-    [GeneratedRegex(@"[^\p{L}'\-]")]
+    [GeneratedRegex(@"[^A-Za-z'-]")]
     private static partial Regex NameTrim();
+
+    [GeneratedRegex(@"(?<=[a-z])(?=[A-Z])")]
+    private static partial Regex LostSpace();
 
     [GeneratedRegex(@"[^A-Za-z]")]
     private static partial Regex WorldTrim();

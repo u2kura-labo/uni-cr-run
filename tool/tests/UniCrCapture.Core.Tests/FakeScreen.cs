@@ -8,12 +8,14 @@ namespace UniCrCapture.Core.Tests;
 /// </summary>
 public sealed class FakeScreen : IPixelSource
 {
-    public int Width => 1132;
+    public int Width => 1132 + (int)_tableAt;
     public int Height => 578;
 
     public List<OcrWord> Words { get; } = new();
     private readonly List<(OcrWord Box, (byte, byte, byte) Color)> _colored = new();
     private (double Top, double Bottom)? _highlight;
+    /// <summary>表ぜんぶを右にずらす量。左にチャットを置く（＝表の外がある）ときに使う。</summary>
+    private double _tableAt;
 
     public (byte R, byte G, byte B) GetPixel(int x, int y)
     {
@@ -49,8 +51,42 @@ public sealed class FakeScreen : IPixelSource
         public bool MisreadLongVowel { get; init; }
         public bool DotInClock { get; init; }
         public bool NoiseFromJobIcons { get; init; }
+        /// <summary>K と D の数字を丸ごと落とす（離れて並ぶ1桁を OCR が拾わないことがある）。</summary>
+        public bool DropKdValues { get; init; }
+        /// <summary>WIN の字を読み落とす（明るい下地に白なので、LOSE より読めないことが多い）。</summary>
+        public bool NoWinWord { get; init; }
+        /// <summary>名前とワールドの中の r が「 になり、そこで語が切れる（Kura → "Ku" "「" "a"）。</summary>
+        public bool MisreadR { get; init; }
+        /// <summary>画面の左にあるチャットが、表の行と同じ高さに出ている。</summary>
+        public bool ChatOnTheLeft { get; init; }
         public string AstraKda { get; init; } = "K:18 D:16 A:54";
         public string UmbraKda { get; init; } = "K:16 D:18 A:49";
+    }
+
+    // 表の K / D / A 列の横位置（見出しと各行で同じ）
+    private const double KX = 494, DX = 533, AX = 569, HeaderY = 170, FirstRowY = 202, RowStep = 32;
+
+    /// <summary>
+    /// K / D / A の列だけを拡大して読み直したときに返ってくる語。
+    /// ResultParser.ReplaceArea に渡して、2回目の読み取りをまねるのに使う。
+    /// </summary>
+    public static List<OcrWord> KdaWords(List<Player>? players = null)
+    {
+        players ??= RealMatch();
+        var words = new List<OcrWord>
+        {
+            new("K", KX, HeaderY, 9, 13),
+            new("D", DX, HeaderY, 9, 13),
+            new("A", AX + 3, HeaderY, 9, 13),
+        };
+        for (var i = 0; i < players.Count; i++)
+        {
+            var (p, y) = (players[i], FirstRowY + i * RowStep);
+            words.Add(new OcrWord(p.K.ToString(), KX, y, 9, 16));
+            words.Add(new OcrWord(p.D.ToString(), DX, y, 9, 16));
+            words.Add(new OcrWord(p.A.ToString(), AX, y, 16, 16));
+        }
+        return words;
     }
 
     public static FakeScreen Build(List<Player>? players = null, Options? opt = null)
@@ -59,12 +95,14 @@ public sealed class FakeScreen : IPixelSource
         opt ??= new Options();
         var s = new FakeScreen();
         const double h = 16;
+        // チャットを置くときは、その幅だけ表を右にずらす（実際の画面でも、表の左にチャットがある）
+        s._tableAt = opt.ChatOnTheLeft ? 420 : 0;
 
         // ---- 上のバナー ----
         s.Japanese("チーム・アストラ", 115, 43, h);
         s.Japanese("進行度", 360, 34, h);
         s.Latin("50.1%", 435, 30, 95, 22);
-        s.Latin("WIN", 105, 73, 34, 12);
+        if (!opt.NoWinWord) s.Latin("WIN", 105, 73, 34, 12);
         foreach (var (t, i) in opt.AstraKda.Split(' ').Select((t, i) => (t, i))) s.Latin(t, 298 + i * 88, 63, 60, 18);
         s.Japanese("チーム・アンブラ", 610, 43, h);
         s.Japanese("進行度", 885, 34, h);
@@ -83,16 +121,16 @@ public sealed class FakeScreen : IPixelSource
         s.Japanese("ソート：アシスト数", 24, 152, 12);
 
         // ---- 見出し ----
-        const double hy = 170;
+        const double hy = HeaderY;
         s.Japanese("ジョブ", 8, hy, 13);
         s.Japanese("キャラクター名", 80, hy, 13);
         s.Japanese("ホームワールド", 256, hy, 13);
         s.Japanese("階級", 418, hy, 13);
         if (opt.KdaHeaders)
         {
-            s.Latin("K", 494, hy, 9, 13);
-            s.Latin("D", 533, hy, 9, 13);
-            s.Latin("A", 572, hy, 9, 13);
+            s.Latin("K", KX, hy, 9, 13);
+            s.Latin("D", DX, hy, 9, 13);
+            s.Latin("A", AX + 3, hy, 9, 13);
         }
         s.Japanese(opt.MisreadLongVowel ? "総与ダメ一ジ量" : "総与ダメージ量", 625, hy, 13);
         s.Japanese("総被ダメージ量", 764, hy, 13);
@@ -103,26 +141,44 @@ public sealed class FakeScreen : IPixelSource
         for (var i = 0; i < players.Count; i++)
         {
             var p = players[i];
-            var y = 202 + i * 32.0;
+            var y = FirstRowY + i * RowStep;
             if (opt.NoiseFromJobIcons) s.Latin("回", 10, y, 14, 16);
+            var color = p.Team == "astra" ? ((byte)40, (byte)70, (byte)170) : ((byte)215, (byte)95, (byte)55);
             var nameX = 47.0;
             foreach (var part in p.Name.Split(' '))
             {
-                var w = part.Length * 9.0;
-                var word = s.Latin(part, nameX, y, w, h);
-                s._colored.Add((word, p.Team == "astra" ? ((byte)40, (byte)70, (byte)170) : ((byte)215, (byte)95, (byte)55)));
-                nameX += w + 6;
+                s.Word(part, ref nameX, y, 9.0, h, opt.MisreadR, color);
+                nameX += 6; // 語と語のあいだ（読み違いで切れたところより、はっきり広い）
             }
-            s.Latin(p.World, 270, y, p.World.Length * 8.5, h);
-            s.Japanese(p.Tier, 405, y, h);
-            s.Latin(p.K.ToString(), 494, y, 9, h);
-            s.Latin(p.D.ToString(), 533, y, 9, h);
-            s.Latin(p.A.ToString(), 569, y, 16, h);
+            var worldX = 270.0;
+            s.Word(p.World, ref worldX, y, 8.5, h, opt.MisreadR, null);
+            s.Japanese(p.Tier, 380, y, h); // 階級の文字は K の列まで届かない（実際の画面と同じ）
+            if (!opt.DropKdValues)
+            {
+                s.Latin(p.K.ToString(), KX, y, 9, h);
+                s.Latin(p.D.ToString(), DX, y, 9, h);
+            }
+            s.Latin(p.A.ToString(), AX, y, 16, h);
             s.Number(p.Dmg, 637, y, opt.SplitNumbersAtComma);
             s.Number(p.Taken, 777, y, opt.SplitNumbersAtComma);
             s.Number(p.Heal, 917, y, opt.SplitNumbersAtComma);
             s.Latin(opt.DotInClock ? p.Crystal.Replace(':', '.') : p.Crystal, 1047, y, 40, h);
             if (p.Self) s._highlight = (y - 8, y + h + 8);
+        }
+
+        // ---- 画面の左のチャット（表の行とちょうど同じ高さに重なる） ----
+        if (opt.ChatOnTheLeft)
+        {
+            for (var i = 0; i < players.Count; i++)
+            {
+                var y = FirstRowY + i * RowStep;
+                s.Outside("[22:37]", 20, y, 45, 13);
+                s.Outside($"({i + 1}{players[i].Name.Replace(" ", "")}", 70, y, 100, 13);
+                s.Outside(players[i].World, 175, y, 55, 13);
+                var cw = 12 * 0.95;
+                for (var c = 0; c < "よろしくお願いします".Length; c++)
+                    s.Outside("よろしくお願いします"[c].ToString(), 235 + c * cw, y, cw, 12);
+            }
         }
 
         // ---- 表の下 ----
@@ -131,9 +187,31 @@ public sealed class FakeScreen : IPixelSource
         return s;
     }
 
+    /// <summary>
+    /// 1語を置く。misreadR のときは、最初の r を「 に置き換えて語を3つに割る
+    /// （Windows の OCR が実際にやること）。色を渡すと、その語の画素に色を付ける。
+    /// </summary>
+    private void Word(string text, ref double x, double y, double cw, double h, bool misreadR, (byte, byte, byte)? color)
+    {
+        var at = misreadR ? text.IndexOf('r') : -1;
+        // r のところで「語・「・語」の3つに割れる（幅がせまく、前後とすき間なく並ぶ）
+        var pieces = at <= 0
+            ? new[] { (Text: text, Width: text.Length * cw) }
+            : at + 1 < text.Length
+                ? new[] { (Text: text[..at], Width: at * cw), (Text: "「", Width: cw * 0.6), (Text: text[(at + 1)..], Width: (text.Length - at - 1) * cw) }
+                : new[] { (Text: text[..at], Width: at * cw), (Text: "「", Width: cw * 0.6) };
+
+        foreach (var piece in pieces)
+        {
+            var word = Latin(piece.Text, x, y, piece.Width, h);
+            if (color is { } c) _colored.Add((word, c));
+            x += piece.Width;
+        }
+    }
+
     private OcrWord Latin(string text, double x, double y, double w, double h)
     {
-        var word = new OcrWord(text, x, y, w, h);
+        var word = new OcrWord(text, x + _tableAt, y, w, h);
         Words.Add(word);
         return word;
     }
@@ -142,8 +220,11 @@ public sealed class FakeScreen : IPixelSource
     private void Japanese(string text, double x, double y, double h)
     {
         var cw = h * 0.95;
-        for (var i = 0; i < text.Length; i++) Words.Add(new OcrWord(text[i].ToString(), x + i * cw, y, cw, h));
+        for (var i = 0; i < text.Length; i++) Words.Add(new OcrWord(text[i].ToString(), x + _tableAt + i * cw, y, cw, h));
     }
+
+    /// <summary>表の外に置くもの（チャットなど）。表のずらしを受けない。</summary>
+    private void Outside(string text, double x, double y, double w, double h) => Words.Add(new OcrWord(text, x, y, w, h));
 
     private void Number(long value, double x, double y, bool split)
     {
