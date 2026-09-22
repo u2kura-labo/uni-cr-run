@@ -21,7 +21,6 @@
       <span id="count" class="muted"></span>
       <a class="button secondary" href="https://github.com/u2kura-labo/uni-cr-run/releases/latest/download/ConflictRecordCapture.exe" title="リザルト画面を撮って matches-日付.jsonl を作る Windows 用ツール">キャプチャツール（Windows）</a>
       <button type="button" data-pick-file>JSONL を読み込む</button>
-      <button type="button" id="key-open" class="secondary" title="他のプレイヤーの名前を表示するための鍵">名前の鍵</button>
       <button type="button" id="export" class="secondary" disabled title="このブラウザの全試合を 1 つの JSONL に書き出す（別の PC・ブラウザで読み込めます）">エクスポート</button>
       <button type="button" id="clear" class="secondary" disabled>データを全削除</button>
       <label class="theme-picker">テーマ
@@ -37,7 +36,6 @@
 
   <main>
     <div id="notice" class="notice" role="status" hidden></div>
-    <div id="key-banner" class="notice key-banner" hidden></div>
 
     <section id="empty" class="empty" hidden>
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 26 12 16 30 6 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 12h20" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -160,26 +158,6 @@
       </div>
     </div>
   </main>
-
-  <dialog id="key-dialog" class="dialog narrow" aria-labelledby="key-title">
-    <form method="dialog" class="dialog-body" id="key-form">
-      <div class="dialog-head">
-        <h2 id="key-title">名前の鍵</h2>
-        <button type="submit" value="close" class="secondary">閉じる</button>
-      </div>
-      <p class="muted">キャプチャツールは、他のプレイヤーの名前を<strong>あなたの鍵</strong>で暗号化して保存します。ファイルが人の手に渡っても名前は読めません。ここに鍵を入れると、このブラウザでだけ名前を表示します（鍵はどこにも送りません）。</p>
-      <p class="muted">鍵は、ツールの「設定」→「鍵をコピー」でコピーするか、「鍵のファイルを保存」で保存したファイル（conflict-record.key）を選んでください。</p>
-      <p id="key-current" class="key-current"></p>
-      <textarea id="key-text" rows="2" placeholder="CRK1: で始まる鍵を貼り付け" spellcheck="false" autocomplete="off"></textarea>
-      <p id="key-error" class="key-error" hidden></p>
-      <div class="dialog-actions">
-        <label class="button secondary file-pick">鍵のファイルを選ぶ<input type="file" id="key-file" accept=".key,.txt" hidden></label>
-        <span class="spacer"></span>
-        <button type="button" id="key-clear" class="secondary">このブラウザから鍵を消す</button>
-        <button type="button" id="key-save">この鍵を使う</button>
-      </div>
-    </form>
-  </dialog>
 
   <dialog id="player-dialog" class="dialog" aria-label="プレイヤーの記録">
     <div class="dialog-body"></div>

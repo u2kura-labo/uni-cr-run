@@ -50,9 +50,8 @@ internal sealed class CaptureService(AppSettings settings)
         }
 
         var match = result.Match;
-        // 他のプレイヤーの名前を自分の鍵で暗号化して、作成者の識別子を付ける（id は平文のときのまま）
         var self = match.Players.First(p => p.Self);
-        AppSettings.LoadOrCreateKey().Protect(match);
+        match.Owner = OwnerMark.For(match);
         var store = new JsonlStore(settings.SaveFolder);
         var written = store.Append(match, at);
         if (written) NextMap = null;

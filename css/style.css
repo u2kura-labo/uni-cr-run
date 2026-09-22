@@ -564,25 +564,6 @@ tr.clickable { cursor: pointer; }
 :root[data-theme="mint"] .dialog { border-radius: 16px; }
 :root[data-theme="mint"] .brand-mark { color: var(--accent); }
 
-/* ---------- 名前の鍵 ---------- */
-.key-banner { border-color: var(--warning); }
-.dialog.narrow { width: min(560px, calc(100vw - 32px)); }
-#key-text {
-  width: 100%;
-  font: 12px/1.5 ui-monospace, Consolas, monospace;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 8px;
-  background: var(--surface);
-  color: var(--text);
-  resize: vertical;
-}
-.key-current { font-size: 13px; margin: 12px 0 6px; }
-.key-error { color: var(--critical); font-size: 12px; }
-.dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
-.dialog-actions .spacer { flex: 1; }
-.file-pick { cursor: pointer; }
-
 /* ---------- フッター ---------- */
 .site-footer { max-width: 1100px; margin: 0 auto; padding: 0 20px 40px; font-size: 12px; color: var(--muted); }
 

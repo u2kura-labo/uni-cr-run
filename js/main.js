@@ -1,7 +1,6 @@
 import { parseJsonl, normalizeMatch, TEAMS } from './schema.js';
 import { loadAll, addRecords, clearAll } from './store.js';
 import { MatchIndex } from './dedupe.js';
-import { importKey, decryptName, isEncrypted, pseudonym } from './crypto.js';
 import {
   applyFilter, summary, groupBy, peerComparison,
   buildPlayerHistory, scoreMatch, selfScore, playerKey, selfKey, byTier, SCORE_SCALE,
@@ -26,8 +25,6 @@ const state = {
   playerQuery: '',
   playerSort: 'n',
   tab: 'overview',
-  nameKey: null, // { key, id, text }：他のプレイヤーの名前を戻す鍵
-  names: { encrypted: 0, hidden: 0 },
 };
 
 const TABS = ['overview', 'analysis', 'matches', 'players'];
@@ -38,7 +35,6 @@ const $ = (sel) => document.querySelector(sel);
 
 async function reload() {
   const stored = await loadAll();
-  state.names = { encrypted: 0, hidden: 0 };
   // 先に取り込んだものを残す（以前の版で二重に入ったものがあっても、表示は1つにする）
   stored.sort((a, b) => (a.importedAt ?? 0) - (b.importedAt ?? 0));
   const matches = [];
@@ -47,7 +43,7 @@ async function reload() {
   for (const rec of stored) {
     let m;
     try {
-      m = normalizeMatch(await revealNames(rec.raw));
+      m = normalizeMatch(rec.raw);
     } catch {
       broken++;
       continue;
@@ -60,108 +56,8 @@ async function reload() {
   state.matches = matches;
   state.broken = broken;
   state.historyCache = new Map();
-  renderKeyBanner();
   pickDefaultChar();
   render();
-}
-
-// ---------- 名前の鍵 ----------
-
-const nameCache = new Map(); // 暗号文 → { name, world }（鍵を変えたら消す）
-
-// 暗号化された名前を戻す（鍵がなければ「プレイヤー #XXXX」）。元の記録は書き換えない
-async function revealNames(raw) {
-  if (!raw?.players?.some((p) => isEncrypted(p.name))) return raw;
-  const copy = structuredClone(raw);
-  for (const p of copy.players) {
-    if (!isEncrypted(p.name)) continue;
-    state.names.encrypted++;
-    const token = p.name;
-    let plain = nameCache.get(token);
-    if (!plain && state.nameKey) {
-      try {
-        plain = await decryptName(state.nameKey.key, token);
-        nameCache.set(token, plain);
-      } catch {
-        plain = null;
-      }
-    }
-    if (plain) {
-      p.name = plain.name;
-      p.world = plain.world;
-    } else {
-      state.names.hidden++;
-      p.name = pseudonym(token);
-      p.world = '';
-    }
-  }
-  return copy;
-}
-
-async function loadSavedKey() {
-  let text = null;
-  try { text = localStorage.getItem('crkey'); } catch { /* 覚えられなくても動く */ }
-  if (!text) return;
-  try {
-    state.nameKey = await importKey(text);
-  } catch {
-    state.nameKey = null;
-  }
-}
-
-function renderKeyBanner() {
-  const box = $('#key-banner');
-  const { encrypted, hidden } = state.names;
-  if (!hidden) {
-    box.hidden = true;
-    return;
-  }
-  const people = `${hidden} 人分（のべ）`;
-  const message = state.nameKey
-    ? `今の鍵（${state.nameKey.id}）では戻せない名前が ${people} あります。別の鍵で作られたファイルかもしれません。`
-    : `他のプレイヤーの名前が暗号化されています（${people}）。鍵を入れると名前を表示できます。`;
-  box.replaceChildren(h('p', {}, message), h('button', { type: 'button', class: 'link', onclick: openKeyDialog }, '鍵を入れる'));
-  box.hidden = encrypted === 0;
-}
-
-function openKeyDialog() {
-  $('#key-current').textContent = state.nameKey ? `いま使っている鍵：${state.nameKey.id}` : '鍵はまだ入っていません。';
-  $('#key-text').value = '';
-  $('#key-error').hidden = true;
-  $('#key-dialog').showModal();
-}
-
-async function useKey(text) {
-  try {
-    state.nameKey = await importKey(text);
-  } catch (err) {
-    $('#key-error').textContent = err.message;
-    $('#key-error').hidden = false;
-    return;
-  }
-  try { localStorage.setItem('crkey', state.nameKey.text); } catch { /* 覚えられなくても、今は使える */ }
-  nameCache.clear();
-  $('#key-dialog').close();
-  showNotice(`鍵（${state.nameKey.id}）を入れました。`);
-  await reload();
-}
-
-function setupKey() {
-  $('#key-open').addEventListener('click', openKeyDialog);
-  $('#key-save').addEventListener('click', () => useKey($('#key-text').value));
-  $('#key-file').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (file) await useKey(await file.text());
-    e.target.value = '';
-  });
-  $('#key-clear').addEventListener('click', async () => {
-    try { localStorage.removeItem('crkey'); } catch { /* 同上 */ }
-    state.nameKey = null;
-    nameCache.clear();
-    $('#key-dialog').close();
-    showNotice('このブラウザから鍵を消しました。');
-    await reload();
-  });
 }
 
 async function importText(text, sourceName) {
@@ -171,7 +67,7 @@ async function importText(text, sourceName) {
   const fresh = [];
   const skipped = { id: duplicatesInFile, content: 0, near: 0 };
   for (const rec of records) {
-    const m = normalizeMatch(await revealNames(rec.raw));
+    const m = normalizeMatch(rec.raw);
     const reason = index.find(m);
     if (reason) {
       skipped[reason]++;
@@ -992,14 +888,12 @@ function setupResize() {
 }
 
 setupTheme();
-setupKey();
 setupImport();
 setupFilters();
 setupTabs();
 setupPlayers();
 setupResize();
-loadSavedKey()
-  .then(reload)
+reload()
   .then(() => {
     // ?demo：保存データが空なら、サンプルを読み込んだ状態で開く（見た目の確認用）
     if (new URLSearchParams(location.search).has('demo') && state.matches.length === 0) return importSample();

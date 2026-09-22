@@ -54,7 +54,7 @@ public sealed class MatchRecord
     [JsonPropertyName("src")] public string? Src { get; set; }
     [JsonPropertyName("app")] public string? App { get; set; }
     [JsonPropertyName("warnings")] public List<string>? Warnings { get; set; }
-    /// <summary>作成者の識別子（キャラ名と鍵の番号を Base64 にしたもの）。NameCipher.Protect が付ける。</summary>
+    /// <summary>作成者の識別子（自分のキャラ名を Base64 にしたもの）。OwnerMark.For で作る。</summary>
     [JsonPropertyName("o")] public string? Owner { get; set; }
 }
 
