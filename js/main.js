@@ -1,5 +1,6 @@
 import { parseJsonl, normalizeMatch, TEAMS } from './schema.js';
 import { loadAll, addRecords, clearAll } from './store.js';
+import { MatchIndex } from './dedupe.js';
 import {
   applyFilter, summary, rollingWinRate, groupBy, peerComparison,
   buildBaselines, buildPlayerHistory, scoreMatch, performanceIndex, playerKey, byTier, tierOf,
@@ -32,14 +33,22 @@ const $ = (sel) => document.querySelector(sel);
 
 async function reload() {
   const stored = await loadAll();
+  // 先に取り込んだものを残す（以前の版で二重に入ったものがあっても、表示は1つにする）
+  stored.sort((a, b) => (a.importedAt ?? 0) - (b.importedAt ?? 0));
   const matches = [];
+  const index = new MatchIndex();
   let broken = 0;
   for (const rec of stored) {
+    let m;
     try {
-      matches.push(normalizeMatch(rec.raw));
+      m = normalizeMatch(rec.raw);
     } catch {
       broken++;
+      continue;
     }
+    if (index.find(m)) continue;
+    index.add(m);
+    matches.push(m);
   }
   matches.sort((a, b) => b.time - a.time);
   state.matches = matches;
@@ -52,9 +61,27 @@ async function reload() {
 
 async function importText(text, sourceName) {
   const { records, errors, duplicatesInFile } = parseJsonl(text);
-  const { added, duplicates } = await addRecords(records);
+  // 取り込み済みの試合、同じファイル内の重複を、id と中身の両方で飛ばす
+  const index = new MatchIndex(state.matches);
+  const fresh = [];
+  const skipped = { id: duplicatesInFile, content: 0, near: 0 };
+  for (const rec of records) {
+    const m = normalizeMatch(rec.raw);
+    const reason = index.find(m);
+    if (reason) {
+      skipped[reason]++;
+      continue;
+    }
+    index.add(m);
+    fresh.push(rec);
+  }
+  const { added, duplicates } = await addRecords(fresh);
+  skipped.id += duplicates;
+
   const parts = [`${sourceName}：${added} 試合を追加しました`];
-  if (duplicates + duplicatesInFile > 0) parts.push(`${duplicates + duplicatesInFile} 試合は取り込み済みでした`);
+  if (skipped.id) parts.push(`${skipped.id} 試合は取り込み済みでした`);
+  if (skipped.content) parts.push(`${skipped.content} 試合は中身が同じ試合がすでにあったので飛ばしました`);
+  if (skipped.near) parts.push(`${skipped.near} 試合はほぼ同じ試合（同じ顔ぶれ・近い時刻・数字の 9 割以上が一致）がすでにあったので飛ばしました`);
   if (errors.length) parts.push(`${errors.length} 行は読めませんでした`);
   showNotice(parts.join('。') + '。', errors);
   await reload();
