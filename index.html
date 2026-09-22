@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>uni-cr-run</title>
+  <meta name="description" content="クリスタルコンフリクトの戦績ビューア。データはこのブラウザの中だけに保存されます。">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>uni-cr-run</h1>
+      <p class="muted">クリスタルコンフリクト戦績ビューア</p>
+    </div>
+    <div class="actions">
+      <span id="count" class="muted"></span>
+      <button type="button" data-pick-file>JSONL を読み込む</button>
+      <button type="button" id="clear" class="secondary" disabled>データを全削除</button>
+      <button type="button" id="theme" class="icon" aria-label="ライト / ダーク切り替え" title="ライト / ダーク切り替え">◐</button>
+    </div>
+    <input type="file" id="file" accept=".jsonl,.json,.txt,application/json" multiple hidden>
+  </header>
+
+  <main>
+    <div id="notice" class="notice" role="status" hidden></div>
+
+    <section id="empty" class="empty" hidden>
+      <h2>matches.jsonl をここにドロップ</h2>
+      <p>読み込んだ戦績は、このブラウザの中（IndexedDB）にだけ保存されます。サーバーには送信しません。</p>
+      <p>次からはページを開くだけで表示されます。新しい試合が増えたら、同じファイルをもう一度ドロップしてください（取り込み済みの試合は自動で飛ばします）。</p>
+      <div class="empty-actions">
+        <button type="button" data-pick-file>ファイルを選ぶ</button>
+        <button type="button" id="sample" class="secondary">サンプルデータで試す</button>
+      </div>
+    </section>
+
+    <div id="dashboard" hidden>
+      <div class="filters" role="group" aria-label="絞り込み">
+        <label>期間
+          <select id="filter-days">
+            <option value="0">全期間</option>
+            <option value="7">直近 7 日</option>
+            <option value="30">直近 30 日</option>
+            <option value="90">直近 90 日</option>
+          </select>
+        </label>
+        <label>ジョブ
+          <select id="filter-job"></select>
+        </label>
+      </div>
+
+      <p id="filtered-empty" class="muted" hidden>この条件に合う試合はありません。</p>
+
+      <div id="filtered">
+        <section id="kpis" class="kpis" aria-label="まとめ"></section>
+
+        <section class="card">
+          <h2>勝率の推移</h2>
+          <p class="muted">直近 10 試合ごとの勝率。横線は 50%。</p>
+          <div id="trend-chart" class="chart-box"></div>
+        </section>
+
+        <div class="grid-2">
+          <section class="card">
+            <h2>ジョブ別</h2>
+            <div id="job-chart" class="chart-box"></div>
+            <div id="job-table" class="table-scroll"></div>
+          </section>
+          <section class="card">
+            <h2>マップ別</h2>
+            <div id="map-chart" class="chart-box"></div>
+            <div id="map-table" class="table-scroll"></div>
+          </section>
+          <section class="card">
+            <h2>ランク別</h2>
+            <p class="muted">試合前のランクごとの勝率。</p>
+            <div id="tier-chart" class="chart-box"></div>
+            <div id="tier-table" class="table-scroll"></div>
+          </section>
+        </div>
+
+        <section class="card">
+          <h2>同じジョブの人との比較</h2>
+          <p id="peer-note" class="muted"></p>
+          <div class="legend" aria-hidden="true">
+            <span><span class="swatch pos"></span>同ジョブ平均より多い</span>
+            <span><span class="swatch neg"></span>同ジョブ平均より少ない</span>
+          </div>
+          <div id="peer-chart" class="chart-box"></div>
+          <div id="peer-table" class="table-scroll"></div>
+        </section>
+
+        <section class="card">
+          <h2>プレイヤー</h2>
+          <p class="muted">試合で一緒になった人の記録（期間・ジョブの絞り込みに関係なく全試合から）。味方のときの勝率が普段より高い人は、組むと勝ちやすい相手です。</p>
+          <div class="filters inline">
+            <label>検索 <input id="player-search" type="search" placeholder="キャラクター名・ワールド" autocomplete="off"></label>
+            <label>並べ替え
+              <select id="player-sort">
+                <option value="n">会った回数が多い順</option>
+                <option value="allyBest">組むと勝ちやすい順</option>
+                <option value="allyWorst">組むと負けやすい順</option>
+                <option value="index">指数が高い順</option>
+                <option value="indexLow">指数が低い順</option>
+              </select>
+            </label>
+          </div>
+          <p id="players-note" class="muted"></p>
+          <div id="players-list"></div>
+        </section>
+
+        <section class="card">
+          <h2>試合一覧</h2>
+          <p class="muted">行をクリックすると、その試合の全員の成績を表示します。</p>
+          <div id="match-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <dialog id="player-dialog" class="dialog" aria-label="プレイヤーの記録">
+    <div class="dialog-body"></div>
+  </dialog>
+
+  <div id="drop-overlay" class="drop-overlay" hidden>
+    <p>ドロップして読み込む</p>
+  </div>
+</body>
+</html>
