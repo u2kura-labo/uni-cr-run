@@ -11,13 +11,14 @@ public partial class ToastWindow : Window
 {
     private readonly DispatcherTimer _timer;
 
-    public ToastWindow(bool ok, string title, IReadOnlyList<string> details)
+    /// <summary>tone を渡すと色を決め打ちできる（例：停止のお知らせは、成功の緑ではなく灰色にする）。</summary>
+    public ToastWindow(bool ok, string title, IReadOnlyList<string> details, string? tone = null)
     {
         InitializeComponent();
         TitleText.Text = title;
         DetailList.ItemsSource = details;
         var warn = ok && details.Any(d => d.StartsWith("要確認"));
-        Stripe.Background = (Brush)FindResource(!ok ? "Critical" : warn ? "Warning" : "Good");
+        Stripe.Background = (Brush)FindResource(tone ?? (!ok ? "Critical" : warn ? "Warning" : "Good"));
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(ok && !warn ? 5 : 10) };
         _timer.Tick += (_, _) => Close();

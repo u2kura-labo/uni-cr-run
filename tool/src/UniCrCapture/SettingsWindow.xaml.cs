@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace UniCrCapture;
@@ -7,18 +8,47 @@ namespace UniCrCapture;
 public partial class SettingsWindow : Window
 {
     private readonly AppSettings _settings;
+    private readonly OverlayWindow? _overlay;
 
-    internal SettingsWindow(AppSettings settings, bool firstRun)
+    internal SettingsWindow(AppSettings settings, bool firstRun, OverlayWindow? overlay = null)
     {
         _settings = settings;
+        _overlay = overlay;
         InitializeComponent();
         SelfName.Text = settings.SelfName;
         SaveFolder.Text = settings.SaveFolder;
         HotkeyText.Text = settings.Hotkey;
         KeepImages.IsChecked = settings.KeepImages;
         if (firstRun) Intro.Text = "はじめに自分のキャラクター名を入れてください。\n" + Intro.Text;
+        if (_overlay is null) StatusBox.Visibility = Visibility.Collapsed;
+        else ShowStatus();
         if (!WindowsOcr.HasJapanese)
             ShowError("この PC には日本語の文字認識が入っていないようです。Windows の「設定 → 時刻と言語 → 言語と地域」で日本語を追加してください。");
+    }
+
+    /// <summary>撮影中か停止中かの表示。停止と開始はその場で効く（保存を押さなくてよい）。</summary>
+    private void ShowStatus()
+    {
+        var paused = _overlay!.Paused;
+        StatusTitle.Text = paused ? "停止中" : "撮影中";
+        StatusNote.Text = paused
+            ? "ボタンもホットキーも効きません。"
+            : $"ボタンか、ホットキー（{_settings.Hotkey}）で撮れます。";
+        PauseToggle.Content = paused ? "開始する" : "停止する";
+    }
+
+    private void OnTogglePause(object sender, RoutedEventArgs e)
+    {
+        if (_overlay is null) return;
+        _overlay.SetPaused(!_overlay.Paused, notify: false);
+        ShowStatus();
+    }
+
+    private void OnQuit(object sender, RoutedEventArgs e)
+    {
+        // 先にこの窓を閉じてから終わらせる（モーダルのまま終了すると後始末が残る）
+        DialogResult = false;
+        Dispatcher.InvokeAsync(() => _overlay?.Quit(), DispatcherPriority.Background);
     }
 
     private void OnBrowse(object sender, RoutedEventArgs e)

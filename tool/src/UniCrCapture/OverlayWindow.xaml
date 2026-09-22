@@ -6,21 +6,63 @@
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
         SizeToContent="WidthAndHeight" ShowActivated="False"
         FontFamily="{StaticResource UiFont}">
-  <Grid x:Name="Root" Width="52" Height="52" Opacity="0.8" Cursor="Hand"
-        ToolTip="リザルト画面で押すと保存します&#x0a;ドラッグで移動・右クリックでメニュー">
-    <Ellipse Fill="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1.5">
-      <Ellipse.Effect>
-        <DropShadowEffect BlurRadius="10" ShadowDepth="0" Opacity="0.6"/>
-      </Ellipse.Effect>
-    </Ellipse>
-    <!-- 状態の輪：処理中は水色、成功は緑、失敗は赤 -->
-    <Ellipse x:Name="StatusRing" Stroke="Transparent" StrokeThickness="3" Margin="1.5"/>
-    <Viewbox Width="24" Height="30">
-      <Canvas Width="32" Height="32">
-        <Path Data="M16,1 L27,12 L16,31 L5,12 Z" Fill="{StaticResource Crystal}"/>
-        <Path Data="M16,1 L21,12 L16,31 L11,12 Z" Fill="White" Opacity="0.22"/>
-        <Path Data="M5,12 L27,12" Stroke="White" StrokeThickness="1" Opacity="0.35"/>
-      </Canvas>
-    </Viewbox>
-  </Grid>
+  <StackPanel x:Name="Root" Orientation="Horizontal" Opacity="0.8">
+
+    <!-- 撮るボタン -->
+    <Grid x:Name="CaptureButton" Width="52" Height="52" Cursor="Hand"
+          ToolTip="リザルト画面で押すと保存します&#x0a;ドラッグで移動できます">
+      <Ellipse Fill="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1.5">
+        <Ellipse.Effect>
+          <DropShadowEffect BlurRadius="10" ShadowDepth="0" Opacity="0.6"/>
+        </Ellipse.Effect>
+      </Ellipse>
+      <!-- 状態の輪：処理中は水色、成功は緑、失敗は赤 -->
+      <Ellipse x:Name="StatusRing" Stroke="Transparent" StrokeThickness="3" Margin="1.5"/>
+      <Viewbox x:Name="CrystalIcon" Width="24" Height="30">
+        <Canvas Width="32" Height="32">
+          <Path Data="M16,1 L27,12 L16,31 L5,12 Z" Fill="{StaticResource Crystal}"/>
+          <Path Data="M16,1 L21,12 L16,31 L11,12 Z" Fill="White" Opacity="0.22"/>
+          <Path Data="M5,12 L27,12" Stroke="White" StrokeThickness="1" Opacity="0.35"/>
+        </Canvas>
+      </Viewbox>
+      <!-- 停止中の印 -->
+      <StackPanel x:Name="PauseMark" Orientation="Horizontal" Visibility="Collapsed"
+                  HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Rectangle Width="5" Height="17" RadiusX="2" RadiusY="2" Fill="{StaticResource Text2}"/>
+        <Rectangle Width="5" Height="17" RadiusX="2" RadiusY="2" Fill="{StaticResource Text2}" Margin="4,0,0,0"/>
+      </StackPanel>
+    </Grid>
+
+    <!-- 設定ボタン（メニューが開く） -->
+    <Grid x:Name="MenuButton" Width="34" Height="34" Margin="4,9,0,9" Cursor="Hand"
+          ToolTip="設定・停止・終了">
+      <Ellipse Fill="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1.5">
+        <Ellipse.Effect>
+          <DropShadowEffect BlurRadius="10" ShadowDepth="0" Opacity="0.6"/>
+        </Ellipse.Effect>
+      </Ellipse>
+      <!-- 歯車：細長い四角を 45 度ずつ回して歯にし、真ん中を丸でくり抜く -->
+      <Grid Width="18" Height="18">
+        <Rectangle Width="4.5" Height="18" RadiusX="1.6" RadiusY="1.6" Fill="{StaticResource Text2}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <Rectangle Width="4.5" Height="18" RadiusX="1.6" RadiusY="1.6" Fill="{StaticResource Text2}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+          <Rectangle.RenderTransform><RotateTransform Angle="45"/></Rectangle.RenderTransform>
+        </Rectangle>
+        <Rectangle Width="4.5" Height="18" RadiusX="1.6" RadiusY="1.6" Fill="{StaticResource Text2}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+          <Rectangle.RenderTransform><RotateTransform Angle="90"/></Rectangle.RenderTransform>
+        </Rectangle>
+        <Rectangle Width="4.5" Height="18" RadiusX="1.6" RadiusY="1.6" Fill="{StaticResource Text2}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+          <Rectangle.RenderTransform><RotateTransform Angle="135"/></Rectangle.RenderTransform>
+        </Rectangle>
+        <Ellipse Width="13.5" Height="13.5" Fill="{StaticResource Text2}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <Ellipse Width="6" Height="6" Fill="{StaticResource Surface}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Grid>
+    </Grid>
+
+  </StackPanel>
 </Window>

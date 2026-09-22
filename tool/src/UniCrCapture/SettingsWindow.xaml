@@ -11,6 +11,21 @@
     <TextBlock x:Name="Intro" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,14"
                Text="リザルト画面でボタン（またはホットキー）を押すと、FF14 の画面を撮って戦績を読み取り、保存フォルダの matches-日付.jsonl に追記します。"/>
 
+    <!-- 動いているか止めているか。ここから終了もできる -->
+    <Border x:Name="StatusBox" Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}"
+            BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,18">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+          <Button x:Name="PauseToggle" Style="{StaticResource DarkButton}" Click="OnTogglePause"/>
+          <Button Content="終了する" Style="{StaticResource DarkButton}" Margin="8,0,0,0" Click="OnQuit"/>
+        </StackPanel>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="StatusTitle" FontWeight="SemiBold"/>
+          <TextBlock x:Name="StatusNote" Foreground="{StaticResource Text2}" FontSize="12" TextWrapping="Wrap"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
     <TextBlock Text="自分のキャラクター名" FontWeight="SemiBold"/>
     <TextBlock Text="リザルト画面の表から自分の行を見つけるのに使います。" Foreground="{StaticResource Text2}" FontSize="12"/>
     <TextBox x:Name="SelfName" Margin="0,4,0,14"/>
