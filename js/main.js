@@ -1,16 +1,17 @@
 import { parseJsonl, normalizeMatch, TEAMS } from './schema.js';
 import { loadAll, addRecords, clearAll } from './store.js';
 import { MatchIndex } from './dedupe.js';
+import { importKey, decryptName, isEncrypted, pseudonym } from './crypto.js';
 import {
-  applyFilter, summary, rollingWinRate, groupBy, peerComparison,
-  buildBaselines, buildPlayerHistory, scoreMatch, performanceIndex, playerKey, byTier, tierOf,
+  applyFilter, summary, groupBy, peerComparison,
+  buildPlayerHistory, scoreMatch, selfScore, playerKey, selfKey, byTier, SCORE_SCALE,
+  ROLE_WEIGHTS, ROLE_LABELS, WINRATE_PRIOR,
 } from './stats.js';
-import { lineChart, barChart, divergingChart } from './charts.js';
+import { lineChart, barChart, divergingChart, showTooltip, hideTooltip } from './charts.js';
 import { jobName, roleGroup } from './jobs.js';
-import { h, s as svgEl } from './dom.js';
+import { h } from './dom.js';
 import * as f from './format.js';
 
-const ROLLING_WINDOW = 10;
 const PAGE_SIZE = 30;
 const TEAM_NAMES = { astra: 'アストラ', umbra: 'アンブラ' };
 const RESULT_NAMES = { win: '勝ち', lose: '負け' };
@@ -18,14 +19,18 @@ const RESULT_NAMES = { win: '勝ち', lose: '負け' };
 const state = {
   matches: [],
   broken: 0,
-  filter: { days: 0, job: '' },
+  filter: { days: 0, job: '', char: '' },
   listLimit: PAGE_SIZE,
   openMatch: null,
-  baselines: null,
   history: new Map(),
   playerQuery: '',
   playerSort: 'n',
+  tab: 'overview',
+  nameKey: null, // { key, id, text }：他のプレイヤーの名前を戻す鍵
+  names: { encrypted: 0, hidden: 0 },
 };
+
+const TABS = ['overview', 'analysis', 'matches', 'players'];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -33,6 +38,7 @@ const $ = (sel) => document.querySelector(sel);
 
 async function reload() {
   const stored = await loadAll();
+  state.names = { encrypted: 0, hidden: 0 };
   // 先に取り込んだものを残す（以前の版で二重に入ったものがあっても、表示は1つにする）
   stored.sort((a, b) => (a.importedAt ?? 0) - (b.importedAt ?? 0));
   const matches = [];
@@ -41,7 +47,7 @@ async function reload() {
   for (const rec of stored) {
     let m;
     try {
-      m = normalizeMatch(rec.raw);
+      m = normalizeMatch(await revealNames(rec.raw));
     } catch {
       broken++;
       continue;
@@ -53,10 +59,109 @@ async function reload() {
   matches.sort((a, b) => b.time - a.time);
   state.matches = matches;
   state.broken = broken;
-  // 指数の基準と対戦履歴は、絞り込みに関係なく全試合から作る
-  state.baselines = buildBaselines(matches);
-  state.history = buildPlayerHistory(matches, state.baselines);
+  state.historyCache = new Map();
+  renderKeyBanner();
+  pickDefaultChar();
   render();
+}
+
+// ---------- 名前の鍵 ----------
+
+const nameCache = new Map(); // 暗号文 → { name, world }（鍵を変えたら消す）
+
+// 暗号化された名前を戻す（鍵がなければ「プレイヤー #XXXX」）。元の記録は書き換えない
+async function revealNames(raw) {
+  if (!raw?.players?.some((p) => isEncrypted(p.name))) return raw;
+  const copy = structuredClone(raw);
+  for (const p of copy.players) {
+    if (!isEncrypted(p.name)) continue;
+    state.names.encrypted++;
+    const token = p.name;
+    let plain = nameCache.get(token);
+    if (!plain && state.nameKey) {
+      try {
+        plain = await decryptName(state.nameKey.key, token);
+        nameCache.set(token, plain);
+      } catch {
+        plain = null;
+      }
+    }
+    if (plain) {
+      p.name = plain.name;
+      p.world = plain.world;
+    } else {
+      state.names.hidden++;
+      p.name = pseudonym(token);
+      p.world = '';
+    }
+  }
+  return copy;
+}
+
+async function loadSavedKey() {
+  let text = null;
+  try { text = localStorage.getItem('crkey'); } catch { /* 覚えられなくても動く */ }
+  if (!text) return;
+  try {
+    state.nameKey = await importKey(text);
+  } catch {
+    state.nameKey = null;
+  }
+}
+
+function renderKeyBanner() {
+  const box = $('#key-banner');
+  const { encrypted, hidden } = state.names;
+  if (!hidden) {
+    box.hidden = true;
+    return;
+  }
+  const people = `${hidden} 人分（のべ）`;
+  const message = state.nameKey
+    ? `今の鍵（${state.nameKey.id}）では戻せない名前が ${people} あります。別の鍵で作られたファイルかもしれません。`
+    : `他のプレイヤーの名前が暗号化されています（${people}）。鍵を入れると名前を表示できます。`;
+  box.replaceChildren(h('p', {}, message), h('button', { type: 'button', class: 'link', onclick: openKeyDialog }, '鍵を入れる'));
+  box.hidden = encrypted === 0;
+}
+
+function openKeyDialog() {
+  $('#key-current').textContent = state.nameKey ? `いま使っている鍵：${state.nameKey.id}` : '鍵はまだ入っていません。';
+  $('#key-text').value = '';
+  $('#key-error').hidden = true;
+  $('#key-dialog').showModal();
+}
+
+async function useKey(text) {
+  try {
+    state.nameKey = await importKey(text);
+  } catch (err) {
+    $('#key-error').textContent = err.message;
+    $('#key-error').hidden = false;
+    return;
+  }
+  try { localStorage.setItem('crkey', state.nameKey.text); } catch { /* 覚えられなくても、今は使える */ }
+  nameCache.clear();
+  $('#key-dialog').close();
+  showNotice(`鍵（${state.nameKey.id}）を入れました。`);
+  await reload();
+}
+
+function setupKey() {
+  $('#key-open').addEventListener('click', openKeyDialog);
+  $('#key-save').addEventListener('click', () => useKey($('#key-text').value));
+  $('#key-file').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (file) await useKey(await file.text());
+    e.target.value = '';
+  });
+  $('#key-clear').addEventListener('click', async () => {
+    try { localStorage.removeItem('crkey'); } catch { /* 同上 */ }
+    state.nameKey = null;
+    nameCache.clear();
+    $('#key-dialog').close();
+    showNotice('このブラウザから鍵を消しました。');
+    await reload();
+  });
 }
 
 async function importText(text, sourceName) {
@@ -66,7 +171,7 @@ async function importText(text, sourceName) {
   const fresh = [];
   const skipped = { id: duplicatesInFile, content: 0, near: 0 };
   for (const rec of records) {
-    const m = normalizeMatch(rec.raw);
+    const m = normalizeMatch(await revealNames(rec.raw));
     const reason = index.find(m);
     if (reason) {
       skipped[reason]++;
@@ -95,6 +200,25 @@ async function importFiles(files) {
       showNotice(`${file.name} を読み込めませんでした：${err.message}`);
     }
   }
+}
+
+// このブラウザの全試合を 1 つの JSONL にして保存する（古い順）。別の PC・ブラウザでそのまま読み込める
+async function exportAll() {
+  const stored = await loadAll();
+  const lines = stored
+    .map((rec) => rec.raw)
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
+    .map((raw) => JSON.stringify(raw));
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'application/x-ndjson' });
+  const url = URL.createObjectURL(blob);
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const a = h('a', { href: url, download: `conflict-record-${stamp}.jsonl` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showNotice(`${lines.length} 試合をエクスポートしました。別の PC・ブラウザでは「JSONL を読み込む」でこのファイルを読み込んでください。`);
 }
 
 async function importSample() {
@@ -128,10 +252,14 @@ function render() {
   $('#empty').hidden = hasData;
   $('#dashboard').hidden = !hasData;
   $('#clear').disabled = !hasData;
+  $('#export').disabled = !hasData;
   $('#count').textContent = hasData ? `保存済み ${state.matches.length} 試合` : '';
   if (!hasData) return;
 
   renderFilters();
+  renderCharHead();
+  // 対戦履歴は、期間・ジョブの絞り込みに関係なく、選んでいるキャラの全試合から作る
+  state.history = historyFor(state.filter.char);
   const filtered = applyFilter(state.matches, state.filter);
   $('#filtered-empty').hidden = filtered.length > 0;
   $('#filtered').hidden = filtered.length === 0;
@@ -145,8 +273,67 @@ function render() {
   renderPlayers();
 }
 
+// ---------- 自分のキャラクター ----------
+
+// 記録に出てくる自分のキャラ（名前＋ワールド）。最近遊んだ順
+function charList() {
+  const chars = new Map();
+  for (const m of state.matches) {
+    const key = selfKey(m);
+    if (!chars.has(key)) chars.set(key, { key, name: m.self.name, world: m.self.world, n: 0, last: m });
+    chars.get(key).n++;
+  }
+  return [...chars.values()];
+}
+
+// 選んでいたキャラを復元する。なければ一番最近遊んだキャラ
+function pickDefaultChar() {
+  const chars = charList();
+  let saved = null;
+  try { saved = localStorage.getItem('char'); } catch { /* 覚えられなくても動く */ }
+  if (saved === '' && chars.length > 1) state.filter.char = '';
+  else if (saved && chars.some((c) => c.key === saved)) state.filter.char = saved;
+  else state.filter.char = chars[0]?.key ?? '';
+}
+
+function historyFor(char) {
+  const key = char || '*';
+  if (!state.historyCache.has(key)) {
+    state.historyCache.set(key, buildPlayerHistory(applyFilter(state.matches, { char })));
+  }
+  return state.historyCache.get(key);
+}
+
+// タブの上に、選んでいるキャラの名前を出す
+function renderCharHead() {
+  const chars = charList();
+  const c = chars.find((x) => x.key === state.filter.char);
+  const box = $('#char-head');
+  if (!c) {
+    box.replaceChildren(
+      h('div', { class: 'char-name' }, 'すべてのキャラ'),
+      h('div', { class: 'char-meta' }, `${chars.length} キャラ・${state.matches.length} 試合`),
+    );
+    return;
+  }
+  const rank = c.last.rank?.after;
+  box.replaceChildren(
+    h('div', { class: 'char-name' }, c.name),
+    h('div', { class: 'char-meta' }, [c.world, rank, `${c.n} 試合`, `最終 ${f.dateTime(c.last.time)}`].filter(Boolean).join('・')),
+  );
+}
+
 function renderFilters() {
-  const jobs = groupBy(state.matches, (m) => m.self.job ?? '');
+  const chars = charList();
+  const charSelect = $('#filter-char');
+  charSelect.replaceChildren(
+    ...(chars.length > 1 ? [h('option', { value: '' }, `すべてのキャラ（${state.matches.length}）`)] : []),
+    ...chars.map((c) => h('option', { value: c.key }, `${c.name}（${c.world}・${c.n}）`)),
+  );
+  charSelect.value = state.filter.char;
+  charSelect.disabled = chars.length <= 1;
+
+  const jobs = groupBy(applyFilter(state.matches, { char: state.filter.char }), (m) => m.self.job ?? '');
   const select = $('#filter-job');
   const current = state.filter.job;
   select.replaceChildren(
@@ -159,97 +346,44 @@ function renderFilters() {
 }
 
 function kpi(label, value, sub) {
-  return h('div', { class: 'kpi' },
-    h('div', { class: 'kpi-label' }, label),
-    h('div', { class: 'kpi-value' }, value),
-    sub ? h('div', { class: 'kpi-sub' }, sub) : null,
-  );
+  return stat(label, value, sub);
 }
 
-// 勝率のリング（メーター）。50% の位置に目盛り
-function winRing(rate) {
-  const r = 48;
-  const c = 2 * Math.PI * r;
-  const v = Math.max(0, Math.min(1, rate ?? 0));
-  return svgEl('svg', { class: 'ring', viewBox: '0 0 112 112', 'aria-hidden': 'true' },
-    svgEl('circle', { cx: 56, cy: 56, r, fill: 'none', 'stroke-width': 10, class: 'track' }),
-    svgEl('circle', {
-      cx: 56, cy: 56, r, fill: 'none', 'stroke-width': 10, class: 'fill',
-      'stroke-dasharray': `${c * v} ${c}`, transform: 'rotate(-90 56 56)',
-    }),
-    svgEl('line', { x1: 56, y1: 112 - 2, x2: 56, y2: 112 - 16, class: 'mid', 'stroke-width': 2 }),
-  );
-}
-
-const TIER_COLORS = {
-  ブロンズ: ['#e0a070', '#8a4b22'],
-  シルバー: ['#eef2f7', '#8a96a8'],
-  ゴールド: ['#ffe08a', '#b7861b'],
-  プラチナ: ['#b8fff0', '#3aa596'],
-  ダイヤモンド: ['#c7ecff', '#3987e5'],
-  クリスタル: ['#f0dcff', '#8a5cf0'],
-};
-
-function emblem(tier) {
-  const [light, dark] = TIER_COLORS[tier] ?? ['#c3cad6', '#6d7b91'];
-  const id = `emb-${Math.abs([...(tier ?? '')].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) % 1e6}`;
-  return svgEl('svg', { class: 'emblem', viewBox: '0 0 48 48', 'aria-hidden': 'true' },
-    svgEl('defs', {}, svgEl('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 },
-      svgEl('stop', { offset: 0, 'stop-color': light }),
-      svgEl('stop', { offset: 1, 'stop-color': dark }),
-    )),
-    svgEl('path', { d: 'M24 2 44 14v20L24 46 4 34V14Z', fill: `url(#${id})` }),
-    svgEl('path', { d: 'M24 10 34 24 24 38 14 24Z', fill: '#fff', opacity: 0.35 }),
+// 大きめの数字 1 つ（ラベル・値・補足）
+function stat(label, value, sub, size = '') {
+  return h('div', { class: `stat ${size}` },
+    h('div', { class: 'stat-label' }, label),
+    h('div', { class: 'stat-value' }, value),
+    sub ? h('div', { class: 'stat-sub' }, sub) : null,
   );
 }
 
 function renderHero(matches) {
   const sum = summary(matches);
-  const recent = matches.slice(0, 10);
+  const recent = matches.slice(0, 5);
   let streak = 0;
   for (const m of matches) {
     if (m.result !== matches[0].result) break;
     streak++;
   }
   const recentWins = recent.filter((m) => m.result === 'win').length;
-  const rankMatch = matches.find((m) => m.rank?.after);
-  const rank = rankMatch?.rank.after ?? null;
-  const tier = tierOf(rank);
+  const rank = matches.find((m) => m.rank?.after)?.rank.after ?? null;
   const firstRank = [...matches].reverse().find((m) => m.rank?.before)?.rank.before ?? null;
-  const [whole, frac] = f.pct(sum.winRate, 1).replace('%', '').split('.');
 
   $('#hero').replaceChildren(
-    h('div', { class: 'hero-main' },
-      winRing(sum.winRate),
-      h('div', {},
-        h('div', { class: 'eyebrow' }, 'Win rate'),
-        h('div', { class: 'hero-rate' }, whole, frac != null ? h('small', {}, `.${frac}%`) : null),
-        h('div', { class: 'hero-sub' }, h('strong', {}, `${sum.wins}W ${sum.n - sum.wins}L`), `・${sum.n} 試合`),
-      ),
-    ),
-    h('div', { class: 'form' },
-      h('div', { class: 'eyebrow' }, 'Recent form'),
-      h('div', { class: 'form-strip', role: 'list', 'aria-label': '直近 10 試合（新しい順）' },
+    stat('勝率', f.pct(sum.winRate, 1), `${sum.wins} 勝 ${sum.n - sum.wins} 敗・${sum.n} 試合`, 'lg'),
+    stat('スコア', f.int(avgScore(matches)), '50 = 同じ役割の平均', 'lg'),
+    stat('ランク', rank ?? '–', firstRank && firstRank !== rank ? `期間の最初 ${firstRank}` : ''),
+    h('div', { class: 'stat' },
+      h('div', { class: 'stat-label' }, '直近 5 試合'),
+      h('div', { class: 'form-strip', role: 'list', 'aria-label': '直近 5 試合（左が新しい）' },
         recent.map((m) => h('span', {
           class: `form-pip ${m.result}`,
           role: 'listitem',
           title: `${f.dateTime(m.time)}・${RESULT_NAMES[m.result]}・${jobName(m.self.job)}`,
-        }, m.result === 'win' ? 'W' : 'L')),
+        }, m.result === 'win' ? '勝' : '負')),
       ),
-      h('div', { class: 'form-note' },
-        h('span', { class: 'streak' }, `${streak} ${matches[0].result === 'win' ? '連勝中' : '連敗中'}`),
-        `・直近 ${recent.length} 試合で ${recentWins} 勝`,
-      ),
-    ),
-    h('div', { class: 'rank-card' },
-      emblem(tier),
-      h('div', {},
-        h('div', { class: 'eyebrow' }, 'Rank'),
-        rank
-          ? h('div', {}, h('span', { class: 'rank-tier' }, tier ?? rank), tier ? h('span', { class: 'rank-stage' }, ` ${rank.slice(tier.length)}`) : null)
-          : h('div', { class: 'rank-tier' }, '–'),
-        firstRank && firstRank !== rank ? h('div', { class: 'rank-from' }, `期間の最初：${firstRank}`) : null,
-      ),
+      h('div', { class: 'stat-sub' }, `${recentWins} 勝・${streak} ${matches[0].result === 'win' ? '連勝中' : '連敗中'}`),
     ),
   );
 }
@@ -258,11 +392,10 @@ function renderKpis(matches) {
   renderHero(matches);
   const sum = summary(matches);
   $('#kpis').replaceChildren(
-    kpi('平均 K / D / A', `${f.dec(sum.avg.k)} / ${f.dec(sum.avg.d)} / ${f.dec(sum.avg.a)}`),
-    kpi('平均 与ダメージ', f.big(sum.avg.dmg)),
-    kpi('平均 与ヒール', f.big(sum.avg.heal)),
-    kpi('平均 移送時間', f.clock(sum.avg.crystal)),
-    kpi('平均 指数', f.int(avgIndex(matches)), '同ジョブ平均 = 100'),
+    stat('平均 K / D / A', `${f.dec(sum.avg.k)} / ${f.dec(sum.avg.d)} / ${f.dec(sum.avg.a)}`),
+    stat('平均 与ダメージ', f.big(sum.avg.dmg)),
+    stat('平均 与ヒール', f.big(sum.avg.heal)),
+    stat('平均 移送時間', f.clock(sum.avg.crystal)),
   );
 }
 
@@ -272,28 +405,38 @@ function jobChip(code) {
   return h('span', { class: role ? `job ${role}` : 'job' }, jobName(code));
 }
 
-function avgIndex(matches) {
-  const xs = matches.map((m) => performanceIndex(m.self, state.baselines)).filter((v) => v != null);
+function avgScore(matches) {
+  const scores = matches.map(selfScore).filter((x) => x?.index != null);
+  const fair = scores.filter((x) => x.reliable);
+  const xs = (fair.length ? fair : scores).map((x) => x.score);
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 }
 
+// 直近 10 試合の勝率の推移：1 試合ごとに「ここまでの勝率」を打つ（最後の点が直近 10 試合の勝率）
+const TREND_MATCHES = 10;
+
 function renderTrend(matches) {
-  // 試合数が区間に満たない最初のほうは値が跳ねるので、区間がそろってから描く
-  const all = rollingWinRate(matches, ROLLING_WINDOW);
-  const rolling = all.length > ROLLING_WINDOW ? all.filter((r) => r.size === ROLLING_WINDOW) : all;
-  const points = rolling.map((r) => ({
-    x: r.index,
-    y: r.rate,
-    tip: [
-      { value: f.pct(r.rate), label: `直近 ${r.size} 試合の勝率`, key: 'line-key' },
-      { value: `${r.index} 試合目`, label: `${f.dateTime(r.match.time)}・${RESULT_NAMES[r.match.result]}` },
-    ],
-  }));
+  const recent = [...matches].sort((a, b) => a.time - b.time).slice(-TREND_MATCHES);
+  let wins = 0;
+  const points = recent.map((m, i) => {
+    if (m.result === 'win') wins++;
+    const n = i + 1;
+    return {
+      x: n,
+      y: wins / n,
+      cls: m.result,
+      tip: [
+        { value: f.pct(wins / n), label: `${n} 試合目までの勝率（${wins} 勝 ${n - wins} 敗）`, key: 'line-key' },
+        { value: RESULT_NAMES[m.result], label: `${f.dateTime(m.time)}・${jobName(m.self.job)}${m.map ? `・${m.map}` : ''}` },
+      ],
+    };
+  });
   lineChart($('#trend-chart'), points, {
     ref: 0.5,
-    endLabel: f.pct(rolling.at(-1)?.rate),
+    dots: true,
+    endLabel: f.pct(points.at(-1)?.y),
     xLabel: '試合',
-    ariaLabel: `直近 ${ROLLING_WINDOW} 試合の勝率の推移`,
+    ariaLabel: `直近 ${recent.length} 試合の勝率の推移`,
   });
 }
 
@@ -385,7 +528,7 @@ function renderPeers(matches) {
 }
 
 function resultBadge(result) {
-  return h('span', { class: `badge ${result}` }, h('span', { class: 'badge-icon', 'aria-hidden': 'true' }, result === 'win' ? '▲' : '▼'), RESULT_NAMES[result]);
+  return h('span', { class: `badge ${result}` }, RESULT_NAMES[result]);
 }
 
 function renderMatchList(matches) {
@@ -432,10 +575,25 @@ function renderMatchList(matches) {
   $('#match-list').replaceChildren(h('div', { class: 'table-scroll' }, table), more);
 }
 
-function indexCell(value) {
-  if (value == null) return '–';
-  const cls = value >= 110 ? 'idx high' : value < 90 ? 'idx low' : 'idx';
-  return h('span', { class: cls }, f.int(value));
+// スコアのマス。detail（その試合の内訳）があれば、クリック・カーソルで内訳を出す
+function scoreCell(score, reliable = true, detail = null) {
+  if (score == null) return '–';
+  // 50 を中心に 5 段階で色を付ける（高いほど緑、低いほどオレンジ）
+  const band = score >= 75 ? 'hi2' : score >= 60 ? 'hi1' : score > 40 ? 'mid' : score > 25 ? 'lo1' : 'lo2';
+  const cls = `score ${band}${reliable ? '' : ' ref'}`;
+  const text = `${f.int(score)}${reliable ? '' : '*'}`;
+  if (!detail) {
+    return h('span', { class: cls, title: reliable ? '' : 'ジョブが分からないため、10 人全員と比べた参考値' }, text);
+  }
+  const show = (e) => {
+    e?.stopPropagation();
+    const rect = e?.currentTarget?.getBoundingClientRect?.();
+    if (rect) showTooltip(rect.left, rect.bottom, scoreReasonRows(detail));
+  };
+  return h('span', {
+    class: `${cls} clickable-score`, tabindex: 0, role: 'button', 'aria-label': `スコア ${text} の内訳`,
+    onclick: show, onmouseenter: show, onfocus: show, onmouseleave: hideTooltip, onblur: hideTooltip,
+  }, text);
 }
 
 function playerButton(p) {
@@ -443,12 +601,40 @@ function playerButton(p) {
   return h('button', { type: 'button', class: 'player-link', onclick: (e) => { e.stopPropagation(); openPlayer(playerKey(p)); } }, p.name);
 }
 
-// 過去の対戦：この試合も含めた、会った回数と平均指数
+// 過去の対戦：この試合も含めた、会った回数とスコア（平均）
 function pastCell(p) {
   if (p.self) return '';
   const hist = state.history.get(playerKey(p));
   if (!hist || hist.n <= 1) return h('span', { class: 'muted' }, '初');
-  return `${hist.n} 戦・${f.int(hist.avgIndex)}`;
+  return h('span', { title: `${hist.confidence.label}（スコアは ${hist.indexN} 試合の平均）` }, `${hist.n} 戦・${f.int(hist.avgScore)}`);
+}
+
+// ---------- スコアの内訳 ----------
+
+const PART_LABELS = { k: 'K', d: 'D', a: 'A', dmg: '与ダメ', taken: '被ダメ', heal: '与ヒール', crystal: '移送' };
+
+function scoreRuleText() {
+  return `スコア：その試合で、同じ役割（DPS・ヒーラー・タンク）の人と比べた成績を 0〜100 にしたもの。50 = 平均くらい、100 = めっちゃ強い（平均の ${SCORE_SCALE.ceil / 100} 倍以上）、0 = 弱い（平均の ${SCORE_SCALE.floor / 100} 倍以下）。* はジョブが分からず 10 人全員と比べた参考値。`;
+}
+
+// 1 項目を「平均と比べてどうだったか」の文にする
+function partText(x) {
+  const label = PART_LABELS[x.key];
+  if (x.key === 'dmg' || x.key === 'heal' || x.key === 'taken') return `${label} 平均の ${Math.round((x.value / x.base) * 100)}%`;
+  if (x.key === 'crystal') return `${label} ${f.clock(x.value)}（平均 ${f.clock(x.base)}）`;
+  return `${label} ${x.value}（平均 ${f.dec(x.base)}）`;
+}
+
+// スコアの内訳：比べた相手と、良かった項目・悪かった項目
+function scoreReasonRows(sc) {
+  const highs = sc.parts.filter((x) => x.ratio >= 1.15).sort((a, b) => b.ratio - a.ratio).slice(0, 3);
+  const lows = sc.parts.filter((x) => x.ratio <= 0.85).sort((a, b) => a.ratio - b.ratio).slice(0, 3);
+  return [
+    { value: `スコア ${f.int(sc.score)}`, label: sc.reliable ? `この試合の${ROLE_LABELS[sc.role]}（${sc.peers} 人）と比べて` : 'ジョブ不明のため 10 人全員と比べた参考値' },
+    highs.length ? { value: '良かった', label: highs.map(partText).join('、') } : null,
+    lows.length ? { value: '低かった', label: lows.map(partText).join('、') } : null,
+    !highs.length && !lows.length ? { value: '平均的', label: 'どの項目も平均に近い' } : null,
+  ].filter(Boolean);
 }
 
 function scoreboard(m) {
@@ -456,7 +642,7 @@ function scoreboard(m) {
     m.duration != null ? `経過時間 ${f.clock(m.duration)}` : null,
     m.rank?.before || m.rank?.after ? `${m.rank.before ?? '?'} → ${m.rank.after ?? '?'}` : null,
   ].filter(Boolean).join('・');
-  const scored = new Map(scoreMatch(m, state.baselines).map((x) => [x.player, x]));
+  const scored = new Map(scoreMatch(m).map((x) => [x.player, x]));
   return h('div', { class: 'scoreboard' },
     meta ? h('p', { class: 'muted' }, meta) : null,
     m.warnings.length ? h('ul', { class: 'warn-list' }, m.warnings.map((w) => h('li', {}, w))) : null,
@@ -474,8 +660,7 @@ function scoreboard(m) {
         h('div', { class: 'table-scroll' }, h('table', { class: 'data compact' },
           h('thead', {}, h('tr', {},
             h('th', {}, 'ジョブ'), h('th', {}, 'キャラクター'), h('th', {}, 'ワールド'), h('th', {}, '階級'),
-            ...['K', 'D', 'A', '与ダメ', '被ダメ', '与ヒール', '移送', '指数'].map((c) => h('th', { class: 'num' }, c)),
-            h('th', {}, ''),
+            ...['K', 'D', 'A', '与ダメ', '被ダメ', '与ヒール', '移送', 'スコア'].map((c) => h('th', { class: 'num' }, c)),
             h('th', { class: 'num' }, '過去の対戦'),
           )),
           h('tbody', {}, m.players.filter((p) => p.team === t).map((p) => {
@@ -492,18 +677,14 @@ function scoreboard(m) {
               h('td', { class: 'num' }, f.int(p.taken)),
               h('td', { class: 'num' }, f.int(p.heal)),
               h('td', { class: 'num' }, f.clock(p.crystal)),
-              h('td', { class: 'num' }, indexCell(sc?.index)),
-              h('td', {},
-                sc?.mvp ? h('span', { class: 'tag mvp' }, 'MVP') : null,
-                sc?.worstInTeam ? h('span', { class: 'tag worst' }, '戦犯候補') : null,
-              ),
+              h('td', { class: 'num' }, scoreCell(sc?.score, sc?.reliable, sc)),
               h('td', { class: 'num' }, pastCell(p)),
             );
           })),
         )),
       );
     }),
-    h('p', { class: 'muted note' }, '指数：同じジョブの平均を 100 としたときの成績（K・A・与ダメ・与ヒール・移送は多いほど、D は少ないほど高い）。戦犯候補はチーム内で指数が一番低い人。'),
+    h('p', { class: 'muted note' }, scoreRuleText(), h('br'), 'スコアをクリックすると、内訳（何が良くて何が低かったか）を表示します。'),
   );
 }
 
@@ -515,12 +696,13 @@ function relationText(g) {
 
 // 並べ替え。少ない試合数の差は偶然が大きいので、差で並べるときは 3 試合以上の人を先にする
 const enough = (n) => (n >= 3 ? 1 : 0);
+const trusted = (p) => p.confidence.level;
 const PLAYER_SORTS = {
-  n: { cmp: (a, b) => b.n - a.n || (b.avgIndex ?? 0) - (a.avgIndex ?? 0) },
+  n: { cmp: (a, b) => b.n - a.n || (b.avgScore ?? 0) - (a.avgScore ?? 0) },
   allyBest: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (b.allyLift ?? -9) - (a.allyLift ?? -9) },
   allyWorst: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (a.allyLift ?? 9) - (b.allyLift ?? 9) },
-  index: { cmp: (a, b) => enough(b.n) - enough(a.n) || (b.avgIndex ?? 0) - (a.avgIndex ?? 0) },
-  indexLow: { cmp: (a, b) => enough(b.n) - enough(a.n) || (a.avgIndex ?? 999) - (b.avgIndex ?? 999) },
+  index: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (b.avgScore ?? 0) - (a.avgScore ?? 0) },
+  indexLow: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (a.avgScore ?? 999) - (b.avgScore ?? 999) },
 };
 
 // 勝率の差（ポイント）。+ は普段より勝っている
@@ -529,6 +711,25 @@ function liftCell(v) {
   const pt = Math.round(v * 100);
   const cls = pt >= 10 ? 'lift up' : pt <= -10 ? 'lift down' : 'lift';
   return h('span', { class: cls }, `${pt > 0 ? '+' : ''}${pt} pt`);
+}
+
+// 指数と補正の決め方（プレイヤー欄の下に出す）
+function indexExplanation() {
+  const keys = ['dmg', 'heal', 'taken', 'd', 'k', 'a'];
+  const roles = ['dps', 'healer', 'tank'];
+  return h('details', { class: 'explain' },
+    h('summary', {}, 'スコアと「普段との差」の決め方'),
+    h('p', {}, `1 試合のスコア：その試合で、同じ役割（両チーム合わせて）の人の平均と項目ごとに比べ、役割ごとの重みで平均したものを 0〜100 にしたもの。50 = 平均くらい、100 = 平均の ${SCORE_SCALE.ceil / 100} 倍以上、0 = 平均の ${SCORE_SCALE.floor / 100} 倍以下。同じ試合の中で比べるので、試合の長さや荒れ具合に左右されません。D は少ないほど良い、移送時間は強さを表しにくいので使いません。`),
+    h('div', { class: 'table-scroll' }, h('table', { class: 'data compact' },
+      h('thead', {}, h('tr', {}, h('th', {}, '項目'), ...roles.map((r) => h('th', { class: 'num' }, ROLE_LABELS[r])))),
+      h('tbody', {}, keys.map((k) => h('tr', {},
+        h('td', {}, PART_LABELS[k]),
+        ...roles.map((r) => h('td', { class: 'num' }, ROLE_WEIGHTS[r][k] ? `${Math.round(ROLE_WEIGHTS[r][k] * 100)}%` : '–')),
+      ))),
+    )),
+    h('p', {}, 'プレイヤーのスコア：同じ役割の人と公平に比べられた試合（ジョブが分かっている試合）の平均。会った回数が多いほど信頼できます（参考：3 試合以下 / 中：4〜9 / 高：10 以上）。'),
+    h('p', {}, `普段との差：一緒のとき（敵のとき）の勝率を、試合数が少ないうちは普段の勝率に寄せて補正してから、普段の勝率と比べたもの（補正の強さ：${WINRATE_PRIOR} 試合分）。3 試合で 3 連勝しても大きな差にはならず、試合数が増えるほど実際の値に近づきます。`),
+  );
 }
 
 function renderPlayers() {
@@ -551,9 +752,9 @@ function renderPlayers() {
   $('#players-list').replaceChildren(h('div', { class: 'table-scroll' }, h('table', { class: 'data players' },
     h('thead', {}, h('tr', {},
       h('th', {}, 'キャラクター'), h('th', {}, 'ワールド'), h('th', {}, 'よく使うジョブ'),
-      h('th', { class: 'num' }, '会った回数'), h('th', { class: 'num' }, '味方のときの勝率'), h('th', { class: 'num' }, '普段との差'),
-      h('th', { class: 'num' }, '敵のときの自分の勝率'), h('th', { class: 'num' }, '普段との差'),
-      h('th', { class: 'num' }, '平均指数'), h('th', { class: 'num' }, '戦犯候補'), h('th', { class: 'num' }, 'MVP'),
+      h('th', { class: 'num' }, '会った回数'), h('th', { class: 'num' }, '一緒のときの勝率'), h('th', { class: 'num', title: '試合数が少ないうちは普段の勝率に寄せて補正した差' }, '普段との差'),
+      h('th', { class: 'num' }, '敵のときの自分の勝率'), h('th', { class: 'num', title: '試合数が少ないうちは普段の勝率に寄せて補正した差' }, '普段との差'),
+      h('th', { class: 'num', title: scoreRuleText() }, 'スコア'),
     )),
     h('tbody', {}, shown.map((p) => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openPlayer(p.key), onkeydown: (e) => { if (e.key === 'Enter') openPlayer(p.key); } },
       h('td', {}, p.name),
@@ -564,11 +765,9 @@ function renderPlayers() {
       h('td', { class: 'num' }, liftCell(p.allyLift)),
       h('td', { class: 'num' }, p.enemyN ? `${f.pct(p.enemyWinRate)}（${p.enemyN}）` : '–'),
       h('td', { class: 'num' }, liftCell(p.enemyLift)),
-      h('td', { class: 'num' }, indexCell(p.avgIndex)),
-      h('td', { class: 'num' }, p.worstCount || '–'),
-      h('td', { class: 'num' }, p.mvpCount || '–'),
+      h('td', { class: 'num' }, scoreCell(p.avgScore, p.indexFair), h('span', { class: `conf c${p.confidence.level}`, title: `${p.confidence.label}（${p.indexN} 試合の平均）` })),
     ))),
-  )), list.length > shown.length ? h('p', { class: 'muted' }, `ほか ${list.length - shown.length} 人。名前で検索してください。`) : null);
+  )), list.length > shown.length ? h('p', { class: 'muted' }, `ほか ${list.length - shown.length} 人。名前で検索してください。`) : null, indexExplanation());
 }
 
 function liftText(v) {
@@ -581,12 +780,13 @@ function openPlayer(key) {
   const p = state.history.get(key);
   if (!p) return;
   const dlg = $('#player-dialog');
-  const verdict = p.n < 3
-    ? '会った回数が少ないので、まだ判断できません。'
-    : p.avgIndex >= 110 ? '同じジョブの平均よりかなり強めです。'
-    : p.avgIndex >= 100 ? '同じジョブの平均より少し上です。'
-    : p.avgIndex >= 90 ? '同じジョブの平均より少し下です。'
-    : '同じジョブの平均よりかなり弱めです。';
+  const verdict = p.confidence.level === 1
+    ? `${p.indexN} 試合だけなので、まだ参考程度です。`
+    : (p.avgScore >= 75 ? 'かなり強めです。'
+      : p.avgScore >= 55 ? '平均より少し上です。'
+      : p.avgScore >= 45 ? '平均くらいです。'
+      : p.avgScore >= 25 ? '平均より少し下です。'
+      : 'かなり弱めです。') + `（${p.confidence.label}・${p.indexN} 試合）`;
 
   dlg.querySelector('.dialog-body').replaceChildren(
     h('div', { class: 'dialog-head' },
@@ -596,22 +796,21 @@ function openPlayer(key) {
       ),
       h('button', { type: 'button', class: 'icon', 'aria-label': '閉じる', onclick: () => dlg.close() }, '×'),
     ),
-    h('div', { class: 'kpis small' },
-      kpi('平均指数', f.int(p.avgIndex), verdict),
+    h('div', { class: 'stats small' },
+      kpi('スコア', f.int(p.avgScore), verdict),
       kpi('会った回数', `${p.n} 回`, `味方 ${p.allyN}・敵 ${p.enemyN}`),
-      kpi('味方のときの勝率', p.allyN ? f.pct(p.allyWinRate) : '–',
-        p.allyN ? `${p.allyN} 試合・普段（${f.pct(p.myWinRate)}）より ${liftText(p.allyLift)}` : '味方になったことなし'),
+      kpi('一緒のときの勝率', p.allyN ? f.pct(p.allyWinRate) : '–',
+        p.allyN ? `${p.allyN} 試合・普段（${f.pct(p.myWinRate)}）より ${liftText(p.allyLift)}（補正後）` : '味方になったことなし'),
       kpi('敵のときの自分の勝率', p.enemyN ? f.pct(p.enemyWinRate) : '–',
-        p.enemyN ? `${p.enemyN} 試合・普段より ${liftText(p.enemyLift)}` : '敵になったことなし'),
+        p.enemyN ? `${p.enemyN} 試合・普段より ${liftText(p.enemyLift)}（補正後）` : '敵になったことなし'),
       kpi('平均 K / D / A', `${f.dec(p.avg.k)} / ${f.dec(p.avg.d)} / ${f.dec(p.avg.a)}`),
-      kpi('戦犯候補 / MVP', `${p.worstCount} / ${p.mvpCount}`, `${p.n} 試合中`),
     ),
     h('h3', {}, '出会った試合'),
     h('div', { class: 'table-scroll' }, h('table', { class: 'data compact' },
       h('thead', {}, h('tr', {},
         h('th', {}, '日時'), h('th', {}, '関係'), h('th', {}, '自分の結果'), h('th', {}, 'ジョブ'), h('th', {}, 'マップ'),
         h('th', { class: 'num' }, 'K / D / A'), h('th', { class: 'num' }, '与ダメ'), h('th', { class: 'num' }, '与ヒール'),
-        h('th', { class: 'num' }, '指数'), h('th', {}, ''),
+        h('th', { class: 'num' }, 'スコア'),
       )),
       h('tbody', {}, p.games.map((g) => h('tr', { class: 'clickable', tabindex: 0, onclick: () => showMatch(g.match.id) },
         h('td', {}, f.dateTime(g.match.time)),
@@ -622,11 +821,7 @@ function openPlayer(key) {
         h('td', { class: 'num' }, `${g.player.k} / ${g.player.d} / ${g.player.a}`),
         h('td', { class: 'num' }, f.big(g.player.dmg)),
         h('td', { class: 'num' }, f.big(g.player.heal)),
-        h('td', { class: 'num' }, indexCell(g.index)),
-        h('td', {},
-          g.mvp ? h('span', { class: 'tag mvp' }, 'MVP') : null,
-          g.worstInTeam ? h('span', { class: 'tag worst' }, '戦犯候補') : null,
-        ),
+        h('td', { class: 'num' }, scoreCell(g.score, g.reliable, g.detail)),
       ))),
     )),
     h('p', { class: 'muted note' }, '行をクリックすると、試合一覧でその試合を開きます。'),
@@ -637,8 +832,9 @@ function openPlayer(key) {
 // プレイヤー詳細から試合一覧の該当試合へ
 function showMatch(id) {
   $('#player-dialog').close();
-  state.filter = { days: 0, job: '' };
+  state.filter = { ...state.filter, days: 0, job: '' };
   state.openMatch = id;
+  setTab('matches', { push: true, rerender: false });
   const idx = state.matches.findIndex((m) => m.id === id);
   state.listLimit = Math.max(PAGE_SIZE, Math.ceil((idx + 1) / PAGE_SIZE) * PAGE_SIZE);
   render();
@@ -647,15 +843,19 @@ function showMatch(id) {
 
 // ---------- 操作 ----------
 
+const THEMES = ['light', 'dark', 'mint'];
+
 function setupTheme() {
-  // ダークが基本。切り替えたらこのブラウザに覚えておく
+  // ホワイト・ブラック・ミントの 3 種類。選んだものはこのブラウザに覚えておく
   const root = document.documentElement;
   let saved = null;
   try { saved = localStorage.getItem('theme'); } catch { /* 保存できなくても動く */ }
-  root.dataset.theme = saved === 'light' ? 'light' : 'dark';
-  $('#theme').addEventListener('click', () => {
-    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem('theme', root.dataset.theme); } catch { /* 同上 */ }
+  root.dataset.theme = THEMES.includes(saved) ? saved : 'light';
+  const select = $('#theme');
+  select.value = root.dataset.theme;
+  select.addEventListener('change', () => {
+    root.dataset.theme = select.value;
+    try { localStorage.setItem('theme', select.value); } catch { /* 同上 */ }
     render();
   });
 }
@@ -692,6 +892,8 @@ function setupImport() {
 
   $('#sample').addEventListener('click', importSample);
 
+  $('#export').addEventListener('click', exportAll);
+
   $('#clear').addEventListener('click', async () => {
     if (!confirm('このブラウザに保存した試合データをすべて削除します。元の JSONL ファイルは消えません。よろしいですか？')) return;
     await clearAll();
@@ -703,6 +905,13 @@ function setupImport() {
 }
 
 function setupFilters() {
+  $('#filter-char').addEventListener('change', (e) => {
+    state.filter.char = e.target.value;
+    try { localStorage.setItem('char', state.filter.char); } catch { /* 覚えられなくても動く */ }
+    state.listLimit = PAGE_SIZE;
+    state.openMatch = null;
+    render();
+  });
   $('#filter-days').addEventListener('change', (e) => {
     state.filter.days = Number(e.target.value);
     state.listLimit = PAGE_SIZE;
@@ -713,6 +922,49 @@ function setupFilters() {
     state.listLimit = PAGE_SIZE;
     render();
   });
+}
+
+// ---------- タブ ----------
+
+// タブを切り替える。選んだタブは URL（#matches など）とこのブラウザに覚えておく
+function setTab(name, { push = true, rerender = true } = {}) {
+  if (!TABS.includes(name)) name = 'overview';
+  state.tab = name;
+  for (const btn of document.querySelectorAll('.tab')) {
+    const on = btn.dataset.tab === name;
+    btn.setAttribute('aria-selected', String(on));
+    btn.tabIndex = on ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll('.tab-panel')) panel.hidden = panel.dataset.tab !== name;
+  try { localStorage.setItem('tab', name); } catch { /* 覚えられなくても動く */ }
+  const hash = `#${name}`;
+  if (location.hash !== hash) {
+    if (push) history.pushState(null, '', hash);
+    else history.replaceState(null, '', hash);
+  }
+  // 隠れていたタブのグラフは幅が 0 で描かれているので、表示してから描き直す
+  if (rerender) render();
+}
+
+function setupTabs() {
+  const tabs = [...document.querySelectorAll('.tab')];
+  for (const btn of tabs) {
+    btn.addEventListener('click', () => setTab(btn.dataset.tab));
+    btn.addEventListener('keydown', (e) => {
+      const i = tabs.indexOf(btn);
+      const next = e.key === 'ArrowRight' ? tabs[(i + 1) % tabs.length] : e.key === 'ArrowLeft' ? tabs[(i - 1 + tabs.length) % tabs.length] : null;
+      if (!next) return;
+      e.preventDefault();
+      next.focus();
+      setTab(next.dataset.tab);
+    });
+  }
+  window.addEventListener('popstate', () => setTab(location.hash.slice(1), { push: false }));
+
+  let saved = null;
+  try { saved = localStorage.getItem('tab'); } catch { /* 同上 */ }
+  const fromUrl = location.hash.slice(1);
+  setTab(TABS.includes(fromUrl) ? fromUrl : saved, { push: false, rerender: false });
 }
 
 function setupPlayers() {
@@ -740,11 +992,14 @@ function setupResize() {
 }
 
 setupTheme();
+setupKey();
 setupImport();
 setupFilters();
+setupTabs();
 setupPlayers();
 setupResize();
-reload()
+loadSavedKey()
+  .then(reload)
   .then(() => {
     // ?demo：保存データが空なら、サンプルを読み込んだ状態で開く（見た目の確認用）
     if (new URLSearchParams(location.search).has('demo') && state.matches.length === 0) return importSample();

@@ -5,47 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Conflict Record</title>
   <meta name="description" content="クリスタルコンフリクトの戦績ビューア。データはこのブラウザの中だけに保存されます。">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="css/style.css">
   <script type="module" src="js/main.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-        <defs>
-          <linearGradient id="crystal" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#8fe3ff"/>
-            <stop offset="0.55" stop-color="#3987e5"/>
-            <stop offset="1" stop-color="#d95926"/>
-          </linearGradient>
-        </defs>
-        <path d="M16 1 27 12 16 31 5 12Z" fill="url(#crystal)"/>
-        <path d="M16 1 21 12 16 31 11 12Z" fill="#fff" opacity=".22"/>
-        <path d="M5 12h22" stroke="#fff" stroke-opacity=".35" stroke-width="1"/>
-      </svg>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 26 12 16 30 6 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 12h20" stroke="currentColor" stroke-width="1.5"/></svg>
       <div>
         <h1>Conflict Record</h1>
-        <p class="muted">Crystalline Conflict Tracker</p>
+        <p class="muted">クリスタルコンフリクトの戦績</p>
       </div>
     </div>
     <div class="actions">
       <span id="count" class="muted"></span>
       <a class="button secondary" href="https://github.com/u2kura-labo/uni-cr-run/releases/latest/download/ConflictRecordCapture.exe" title="リザルト画面を撮って matches-日付.jsonl を作る Windows 用ツール">キャプチャツール（Windows）</a>
       <button type="button" data-pick-file>JSONL を読み込む</button>
+      <button type="button" id="key-open" class="secondary" title="他のプレイヤーの名前を表示するための鍵">名前の鍵</button>
+      <button type="button" id="export" class="secondary" disabled title="このブラウザの全試合を 1 つの JSONL に書き出す（別の PC・ブラウザで読み込めます）">エクスポート</button>
       <button type="button" id="clear" class="secondary" disabled>データを全削除</button>
-      <button type="button" id="theme" class="icon" aria-label="ライト / ダーク切り替え" title="ライト / ダーク切り替え">◐</button>
+      <label class="theme-picker">テーマ
+        <select id="theme">
+          <option value="light">ホワイト</option>
+          <option value="dark">ブラック</option>
+          <option value="mint">ミント</option>
+        </select>
+      </label>
     </div>
     <input type="file" id="file" accept=".jsonl,.json,.txt,application/json" multiple hidden>
   </header>
 
   <main>
     <div id="notice" class="notice" role="status" hidden></div>
+    <div id="key-banner" class="notice key-banner" hidden></div>
 
     <section id="empty" class="empty" hidden>
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 1 27 12 16 31 5 12Z" fill="url(#crystal)"/><path d="M16 1 21 12 16 31 11 12Z" fill="#fff" opacity=".22"/></svg>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 26 12 16 30 6 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 12h20" stroke="currentColor" stroke-width="1.5"/></svg>
       <h2>matches-日付.jsonl をここにドロップ</h2>
       <p>読み込んだ戦績は、このブラウザの中（IndexedDB）にだけ保存されます。サーバーには送信しません。</p>
       <p>次からはページを開くだけで表示されます。新しい試合が増えたら、同じファイルをもう一度ドロップしてください（取り込み済みの試合は自動で飛ばします）。</p>
@@ -62,7 +57,12 @@
     </section>
 
     <div id="dashboard" hidden>
+      <div id="char-head" class="char-head"></div>
+
       <div class="filters" role="group" aria-label="絞り込み">
+        <label>キャラ
+          <select id="filter-char"></select>
+        </label>
         <label>期間
           <select id="filter-days">
             <option value="0">全期間</option>
@@ -76,79 +76,118 @@
         </label>
       </div>
 
+      <nav class="tabs" role="tablist" aria-label="表示の切り替え">
+        <button type="button" role="tab" class="tab" data-tab="overview" aria-controls="tab-overview">概要</button>
+        <button type="button" role="tab" class="tab" data-tab="analysis" aria-controls="tab-analysis">分析</button>
+        <button type="button" role="tab" class="tab" data-tab="matches" aria-controls="tab-matches">試合</button>
+        <button type="button" role="tab" class="tab" data-tab="players" aria-controls="tab-players">プレイヤー</button>
+      </nav>
+
       <p id="filtered-empty" class="muted" hidden>この条件に合う試合はありません。</p>
 
       <div id="filtered">
-        <section id="hero" class="hero" aria-label="勝率と直近の流れ"></section>
-        <section id="kpis" class="kpis" aria-label="平均の成績"></section>
+        <div id="tab-overview" class="tab-panel" role="tabpanel" data-tab="overview">
+          <section id="hero" class="stats hero" aria-label="勝率と直近の流れ"></section>
+          <section id="kpis" class="stats" aria-label="平均の成績"></section>
 
-        <section class="card">
-          <h2 data-en="TREND">勝率の推移</h2>
-          <p class="muted">直近 10 試合ごとの勝率。横線は 50%。</p>
-          <div id="trend-chart" class="chart-box"></div>
-        </section>
-
-        <div class="grid-2">
           <section class="card">
-            <h2 data-en="JOBS">ジョブ別</h2>
-            <div id="job-chart" class="chart-box"></div>
-            <div id="job-table" class="table-scroll"></div>
-          </section>
-          <section class="card">
-            <h2 data-en="MAPS">マップ別</h2>
-            <div id="map-chart" class="chart-box"></div>
-            <div id="map-table" class="table-scroll"></div>
-          </section>
-          <section class="card">
-            <h2 data-en="RANKS">ランク別</h2>
-            <p class="muted">試合前のランクごとの勝率。</p>
-            <div id="tier-chart" class="chart-box"></div>
-            <div id="tier-table" class="table-scroll"></div>
+            <h2>勝率の推移</h2>
+            <p class="muted">直近 10 試合を 1 試合ずつ。各点は、そこまでの勝率（緑 = 勝ち、赤 = 負け）。横線は 50%。</p>
+            <div id="trend-chart" class="chart-box"></div>
           </section>
         </div>
 
-        <section class="card">
-          <h2 data-en="VS SAME JOB">同じジョブの人との比較</h2>
-          <p id="peer-note" class="muted"></p>
-          <div class="legend" aria-hidden="true">
-            <span><span class="swatch pos"></span>同ジョブ平均より多い</span>
-            <span><span class="swatch neg"></span>同ジョブ平均より少ない</span>
+        <div id="tab-analysis" class="tab-panel" role="tabpanel" data-tab="analysis">
+          <div class="grid-2">
+            <section class="card">
+              <h2>ジョブ別</h2>
+              <div id="job-chart" class="chart-box"></div>
+              <div id="job-table" class="table-scroll"></div>
+            </section>
+            <section class="card">
+              <h2>マップ別</h2>
+              <div id="map-chart" class="chart-box"></div>
+              <div id="map-table" class="table-scroll"></div>
+            </section>
+            <section class="card">
+              <h2>ランク別</h2>
+              <p class="muted">試合前のランクごとの勝率。</p>
+              <div id="tier-chart" class="chart-box"></div>
+              <div id="tier-table" class="table-scroll"></div>
+            </section>
           </div>
-          <div id="peer-chart" class="chart-box"></div>
-          <div id="peer-table" class="table-scroll"></div>
-        </section>
 
-        <section class="card">
-          <h2 data-en="PLAYERS">プレイヤー</h2>
-          <p class="muted">試合で一緒になった人の記録（期間・ジョブの絞り込みに関係なく全試合から）。味方のときの勝率が普段より高い人は、組むと勝ちやすい相手です。</p>
-          <div class="filters inline">
-            <label>検索 <input id="player-search" type="search" placeholder="キャラクター名・ワールド" autocomplete="off"></label>
-            <label>並べ替え
-              <select id="player-sort">
-                <option value="n">会った回数が多い順</option>
-                <option value="allyBest">組むと勝ちやすい順</option>
-                <option value="allyWorst">組むと負けやすい順</option>
-                <option value="index">指数が高い順</option>
-                <option value="indexLow">指数が低い順</option>
-              </select>
-            </label>
-          </div>
-          <p id="players-note" class="muted"></p>
-          <div id="players-list"></div>
-        </section>
+          <section class="card">
+            <h2>同じジョブの人との比較</h2>
+            <p id="peer-note" class="muted"></p>
+            <div class="legend" aria-hidden="true">
+              <span><span class="swatch pos"></span>同ジョブ平均より多い</span>
+              <span><span class="swatch neg"></span>同ジョブ平均より少ない</span>
+            </div>
+            <div id="peer-chart" class="chart-box"></div>
+            <div id="peer-table" class="table-scroll"></div>
+          </section>
+        </div>
 
-        <section class="card">
-          <h2 data-en="MATCHES">試合一覧</h2>
-          <p class="muted">行をクリックすると、その試合の全員の成績を表示します。</p>
-          <div id="match-list"></div>
-        </section>
+        <div id="tab-matches" class="tab-panel" role="tabpanel" data-tab="matches">
+          <section class="card">
+            <h2>試合一覧</h2>
+            <p class="muted">行をクリックすると、その試合の全員の成績を表示します。</p>
+            <div id="match-list"></div>
+          </section>
+        </div>
+
+        <div id="tab-players" class="tab-panel" role="tabpanel" data-tab="players">
+          <section class="card">
+            <h2>プレイヤー</h2>
+            <p class="muted">試合で一緒になった人の記録（期間・ジョブの絞り込みに関係なく全試合から）。一緒のときの勝率が普段より高い人は、組むと勝ちやすい相手です。</p>
+            <div class="filters inline">
+              <label>検索 <input id="player-search" type="search" placeholder="キャラクター名・ワールド" autocomplete="off"></label>
+              <label>並べ替え
+                <select id="player-sort">
+                  <option value="n">会った回数が多い順</option>
+                  <option value="allyBest">組むと勝ちやすい順</option>
+                  <option value="allyWorst">組むと負けやすい順</option>
+                  <option value="index">スコアが高い順</option>
+                  <option value="indexLow">スコアが低い順</option>
+                </select>
+              </label>
+            </div>
+            <p id="players-note" class="muted"></p>
+            <div id="players-list"></div>
+          </section>
+        </div>
       </div>
     </div>
   </main>
 
+  <dialog id="key-dialog" class="dialog narrow" aria-labelledby="key-title">
+    <form method="dialog" class="dialog-body" id="key-form">
+      <div class="dialog-head">
+        <h2 id="key-title">名前の鍵</h2>
+        <button type="submit" value="close" class="secondary">閉じる</button>
+      </div>
+      <p class="muted">キャプチャツールは、他のプレイヤーの名前を<strong>あなたの鍵</strong>で暗号化して保存します。ファイルが人の手に渡っても名前は読めません。ここに鍵を入れると、このブラウザでだけ名前を表示します（鍵はどこにも送りません）。</p>
+      <p class="muted">鍵は、ツールの「設定」→「鍵をコピー」でコピーするか、「鍵のファイルを保存」で保存したファイル（conflict-record.key）を選んでください。</p>
+      <p id="key-current" class="key-current"></p>
+      <textarea id="key-text" rows="2" placeholder="CRK1: で始まる鍵を貼り付け" spellcheck="false" autocomplete="off"></textarea>
+      <p id="key-error" class="key-error" hidden></p>
+      <div class="dialog-actions">
+        <label class="button secondary file-pick">鍵のファイルを選ぶ<input type="file" id="key-file" accept=".key,.txt" hidden></label>
+        <span class="spacer"></span>
+        <button type="button" id="key-clear" class="secondary">このブラウザから鍵を消す</button>
+        <button type="button" id="key-save">この鍵を使う</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="player-dialog" class="dialog" aria-label="プレイヤーの記録">
     <div class="dialog-body"></div>
   </dialog>
+
+  <footer class="site-footer">
+    <p>Conflict Record は個人で使うためのツールです。他のプレイヤーの名前が入ったデータや、その画面のスクリーンショットを共有しないでください。データはこのブラウザの中だけに保存され、どこにも送信されません。</p>
+  </footer>
 
   <div id="drop-overlay" class="drop-overlay" hidden>
     <p>ドロップして読み込む</p>

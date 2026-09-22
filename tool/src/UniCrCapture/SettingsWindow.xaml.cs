@@ -16,6 +16,7 @@ public partial class SettingsWindow : Window
         SaveFolder.Text = settings.SaveFolder;
         HotkeyText.Text = settings.Hotkey;
         KeepImages.IsChecked = settings.KeepImages;
+        KeyIdText.Text = $"鍵の番号：{AppSettings.LoadOrCreateKey().KeyId}";
         if (firstRun) Intro.Text = "はじめに自分のキャラクター名を入れてください。\n" + Intro.Text;
         if (!WindowsOcr.HasJapanese)
             ShowError("この PC には日本語の文字認識が入っていないようです。Windows の「設定 → 時刻と言語 → 言語と地域」で日本語を追加してください。");
@@ -44,6 +45,20 @@ public partial class SettingsWindow : Window
         _settings.Hotkey = HotkeyText.Text.Trim();
         _settings.KeepImages = KeepImages.IsChecked == true;
         DialogResult = true;
+    }
+
+    private void OnCopyKey(object sender, RoutedEventArgs e)
+    {
+        Clipboard.SetText(AppSettings.LoadOrCreateKey().Export());
+        KeyStatus.Text = "鍵をコピーしました。ビューアの「名前の鍵」に貼り付けてください。";
+    }
+
+    private void OnSaveKey(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog { Title = "鍵のファイルを保存", FileName = "conflict-record.key", Filter = "鍵 (*.key)|*.key" };
+        if (dialog.ShowDialog(this) != true) return;
+        File.Copy(AppSettings.KeyPath, dialog.FileName, overwrite: true);
+        KeyStatus.Text = $"保存しました：{dialog.FileName}";
     }
 
     private void OnOpenViewer(object sender, RoutedEventArgs e) =>

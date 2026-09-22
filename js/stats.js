@@ -1,4 +1,5 @@
 // 集計。入力はすべて normalizeMatch() 済みの試合。
+import { roleGroup } from './jobs.js';
 
 export const METRICS = [
   { key: 'k', label: 'キル', format: 'dec' },
@@ -12,8 +13,14 @@ export const METRICS = [
 
 const DAY = 24 * 60 * 60 * 1000;
 
-export function applyFilter(matches, { days, job, now = Date.now() }) {
+// 自分のキャラクター（複数キャラで遊んでいる場合の見分け）
+export function selfKey(m) {
+  return `${m.self.name}@${m.self.world}`;
+}
+
+export function applyFilter(matches, { days, job, char, now = Date.now() }) {
   return matches.filter((m) => {
+    if (char && selfKey(m) !== char) return false;
     if (days && m.time < now - days * DAY) return false;
     // job が '-' のときは「ジョブ不明」の試合
     if (job && (m.self.job ?? '-') !== job) return false;
@@ -79,85 +86,96 @@ export function byTier(matches) {
   return groups.sort((a, b) => order(a.key) - order(b.key));
 }
 
-// ---------- パフォーマンス指数とプレイヤー履歴 ----------
+// ---------- パフォーマンス指数（試合の中での比較） ----------
+//
+// 1 試合の指数は「その試合で、同じ役割の人と比べてどうだったか」。
+// 同じ試合の中で比べるので、試合の長さや荒れ具合（全員の与ダメが多い試合など）の影響を受けない。
+// 同じ役割（両チーム合わせて）の人の平均を 100 として項目ごとに比べ、役割ごとの重みで平均する。
 
-// 指数に使う項目。dir: 1 = 多いほど良い、-1 = 少ないほど良い。
-// 被ダメはタンクだと多くて当然なので使わない。
-export const INDEX_METRICS = [
-  { key: 'k', dir: 1 },
-  { key: 'd', dir: -1 },
-  { key: 'a', dir: 1 },
-  { key: 'dmg', dir: 1 },
-  { key: 'heal', dir: 1 },
-  { key: 'crystal', dir: 1 },
-];
+// 役割ごとの重み。移送時間は強さを表しにくいので使わない。アシスト・キルは少しだけ。
+export const ROLE_WEIGHTS = {
+  dps: { dmg: 0.5, d: 0.3, k: 0.1, a: 0.1 },
+  healer: { heal: 0.35, d: 0.3, dmg: 0.25, a: 0.1 },
+  tank: { dmg: 0.3, taken: 0.25, d: 0.25, k: 0.1, a: 0.1 },
+  // ジョブが分からない人：役割で分けずに 10 人全員と比べる（参考値）
+  unknown: { dmg: 0.45, d: 0.3, heal: 0.05, k: 0.1, a: 0.1 },
+};
+// 少ないほど良い項目
+const LOWER_IS_BETTER = new Set(['d']);
 const RATIO_MIN = 0.25;
 const RATIO_MAX = 3;
+
+export const ROLE_LABELS = { dps: 'DPS', healer: 'ヒーラー', tank: 'タンク', unknown: '全員' };
 
 export function playerKey(p) {
   return `${p.name}@${p.world}`;
 }
 
-// 全試合・全プレイヤーから、ジョブごとの平均（と、ジョブ不明用の全体平均）を出す。
-export function buildBaselines(matches) {
-  const byJob = new Map();
-  const all = {};
-  for (const m of matches) {
-    for (const p of m.players) {
-      const job = p.job ?? null;
-      if (job && !byJob.has(job)) byJob.set(job, {});
-      for (const { key } of INDEX_METRICS) {
-        if (p[key] == null) continue;
-        (all[key] ??= []).push(p[key]);
-        if (job) (byJob.get(job)[key] ??= []).push(p[key]);
-      }
+// スコア：指数を 0〜100 の点数にしたもの。50 = 同じ役割の平均くらい、100 = めっちゃ強い、0 = 弱い。
+// 指数 60 以下（平均の 0.6 倍）を 0、140 以上（平均の 1.4 倍）を 100 として、その間をまっすぐつなぐ。
+// 基準を固定しているので、試合をまたいで比べたり平均したりできる。
+export const SCORE_SCALE = { floor: 60, ceil: 140 };
+
+export function toScore(index) {
+  if (index == null) return null;
+  const { floor, ceil } = SCORE_SCALE;
+  return Math.max(0, Math.min(100, ((index - floor) / (ceil - floor)) * 100));
+}
+
+// その試合の全員の指数・スコアと内訳。
+// reliable：ジョブが分かっていて、同じ試合に同じ役割の人が自分のほかにもいる（= 公平に比べられた）
+export function scoreMatch(m) {
+  const roleOf = (p) => roleGroup(p.job) ?? 'unknown';
+  const scored = m.players.map((p) => {
+    const role = roleOf(p);
+    const sameRole = role === 'unknown' ? [] : m.players.filter((q) => roleOf(q) === role);
+    const reliable = sameRole.length >= 2;
+    const peers = reliable ? sameRole : m.players;
+    const weights = ROLE_WEIGHTS[reliable ? role : 'unknown'];
+    const parts = [];
+    for (const [key, w] of Object.entries(weights)) {
+      const v = p[key];
+      const b = mean(peers.map((q) => q[key]));
+      if (v == null || b == null) continue;
+      // 0 がありうる項目のために +1 してから比べる。ratio は「良さ」（1 より大きいほど良い）
+      const r = LOWER_IS_BETTER.has(key) ? (b + 1) / (v + 1) : (v + 1) / (b + 1);
+      parts.push({ key, weight: w, value: v, base: b, ratio: Math.min(RATIO_MAX, Math.max(RATIO_MIN, r)) });
     }
-  }
-  const toMeans = (lists) => Object.fromEntries(INDEX_METRICS.map(({ key }) => [key, mean(lists[key] ?? [])]));
-  const jobs = new Map([...byJob].map(([job, lists]) => [job, { means: toMeans(lists), n: lists.k?.length ?? 0 }]));
-  return { jobs, all: toMeans(all) };
+    const wsum = parts.reduce((acc, x) => acc + x.weight, 0);
+    const index = wsum ? (parts.reduce((acc, x) => acc + x.weight * x.ratio, 0) / wsum) * 100 : null;
+    return { player: p, role: reliable ? role : 'unknown', peers: peers.length, reliable, index, score: toScore(index), parts };
+  });
+
+  return scored;
 }
 
-// 同じジョブの平均を 100 としたときの成績。サンプルが少ないジョブ（5人未満）は全体平均と比べる。
-export function performanceIndex(p, baselines) {
-  const job = p.job && baselines.jobs.get(p.job);
-  const base = job && job.n >= 5 ? job.means : baselines.all;
-  const ratios = [];
-  for (const { key, dir } of INDEX_METRICS) {
-    const v = p[key];
-    const b = base[key];
-    if (v == null || b == null) continue;
-    // D と移送時間は 0 がありうるので、+1 してから比べる
-    const r = dir > 0 ? (v + 1) / (b + 1) : (b + 1) / (v + 1);
-    ratios.push(Math.min(RATIO_MAX, Math.max(RATIO_MIN, r)));
-  }
-  return ratios.length ? (ratios.reduce((a, c) => a + c, 0) / ratios.length) * 100 : null;
+export function selfScore(m) {
+  return scoreMatch(m).find((x) => x.player.self);
 }
 
-// 試合ごとの指数と、その試合のチーム内最下位・試合の最高を付ける。
-export function scoreMatch(m, baselines) {
-  const scored = m.players.map((p) => ({ player: p, index: performanceIndex(p, baselines) }));
-  const valid = scored.filter((s) => s.index != null);
-  const mvp = valid.reduce((best, s) => (!best || s.index > best.index ? s : best), null);
-  const worst = {};
-  for (const team of ['astra', 'umbra']) {
-    worst[team] = valid.filter((s) => s.player.team === team)
-      .reduce((low, s) => (!low || s.index < low.index ? s : low), null);
-  }
-  return scored.map((s) => ({
-    ...s,
-    mvp: s === mvp,
-    worstInTeam: s === worst[s.player.team],
-  }));
+// ---------- プレイヤーの記録（過去の試合の積み重ね） ----------
+
+// 一緒のときの勝率は、試合数が少ないうちは偶然が大きいので、普段の勝率に寄せて補正する。
+// 補正後 =（勝ち + 普段の勝率 × PRIOR）÷（試合数 + PRIOR）。試合数が増えるほど実際の値に近づく。
+export const WINRATE_PRIOR = 4;
+
+// 会った回数による信頼度
+export function confidenceOf(n) {
+  if (n >= 10) return { level: 3, label: '信頼度 高' };
+  if (n >= 4) return { level: 2, label: '信頼度 中' };
+  return { level: 1, label: '参考' };
 }
 
-// 自分以外のプレイヤーごとの、自分との対戦履歴。
-export function buildPlayerHistory(matches, baselines) {
+function adjustedRate(wins, n, prior) {
+  return n + WINRATE_PRIOR > 0 ? (wins + prior * WINRATE_PRIOR) / (n + WINRATE_PRIOR) : null;
+}
+
+// 自分以外のプレイヤーごとの、自分との対戦履歴と評価。
+export function buildPlayerHistory(matches) {
   const history = new Map();
-  const myWinRate = matches.length ? matches.filter((m) => m.result === 'win').length / matches.length : null;
+  const myWinRate = matches.length ? matches.filter((m) => m.result === 'win').length / matches.length : 0.5;
   for (const m of matches) {
-    const scored = scoreMatch(m, baselines);
-    for (const s of scored) {
+    for (const s of scoreMatch(m)) {
       const p = s.player;
       if (p.self || !p.name) continue;
       const key = playerKey(p);
@@ -166,8 +184,9 @@ export function buildPlayerHistory(matches, baselines) {
         match: m,
         player: p,
         index: s.index,
-        mvp: s.mvp,
-        worstInTeam: s.worstInTeam,
+        score: s.score,
+        reliable: s.reliable,
+        detail: s,
         relation: p.team === m.self.team ? 'ally' : 'enemy',
       });
     }
@@ -176,29 +195,37 @@ export function buildPlayerHistory(matches, baselines) {
     h.games.sort((a, b) => b.match.time - a.match.time);
     const ally = h.games.filter((g) => g.relation === 'ally');
     const enemy = h.games.filter((g) => g.relation === 'enemy');
+    const allyWins = ally.filter((g) => g.match.result === 'win').length;
+    const enemyWins = enemy.filter((g) => g.match.result === 'win').length;
     const jobs = new Map();
     for (const g of h.games) {
       const j = g.player.job ?? '';
       jobs.set(j, (jobs.get(j) ?? 0) + 1);
     }
+    // 評価に使うのは、同じ役割の人と公平に比べられた試合だけ（なければ参考として全試合）
+    const fair = h.games.filter((g) => g.reliable && g.index != null);
+    const indexGames = fair.length ? fair : h.games.filter((g) => g.index != null);
     Object.assign(h, {
       n: h.games.length,
       allyN: ally.length,
       enemyN: enemy.length,
-      // 味方のとき：一緒に勝った割合 / 敵のとき：自分が勝った割合
-      allyWinRate: ally.length ? ally.filter((g) => g.match.result === 'win').length / ally.length : null,
-      enemyWinRate: enemy.length ? enemy.filter((g) => g.match.result === 'win').length / enemy.length : null,
       myWinRate,
-      avgIndex: mean(h.games.map((g) => g.index)),
-      worstCount: h.games.filter((g) => g.worstInTeam).length,
-      mvpCount: h.games.filter((g) => g.mvp).length,
+      // 実際の勝率（味方のとき：一緒に勝った割合 / 敵のとき：自分が勝った割合）
+      allyWinRate: ally.length ? allyWins / ally.length : null,
+      enemyWinRate: enemy.length ? enemyWins / enemy.length : null,
+      // 補正した勝率と、普段との差（並べ替え・評価にはこちらを使う）
+      allyAdjusted: ally.length ? adjustedRate(allyWins, ally.length, myWinRate) : null,
+      enemyAdjusted: enemy.length ? adjustedRate(enemyWins, enemy.length, myWinRate) : null,
+      avgScore: mean(indexGames.map((g) => g.score)),
+      indexN: indexGames.length,
+      indexFair: fair.length > 0,
+      confidence: confidenceOf(indexGames.length),
       jobs: [...jobs.entries()].sort((a, b) => b[1] - a[1]).map(([job, n]) => ({ job: job || null, n })),
       tier: h.games[0].player.tier,
       avg: Object.fromEntries(METRICS.map(({ key }) => [key, mean(h.games.map((g) => g.player[key]))])),
     });
-    // 自分の普段の勝率との差（ポイント）。味方のときは一緒に勝ちやすいか、敵のときは勝ちにくい相手か
-    h.allyLift = h.allyWinRate != null && myWinRate != null ? h.allyWinRate - myWinRate : null;
-    h.enemyLift = h.enemyWinRate != null && myWinRate != null ? h.enemyWinRate - myWinRate : null;
+    h.allyLift = h.allyAdjusted != null ? h.allyAdjusted - myWinRate : null;
+    h.enemyLift = h.enemyAdjusted != null ? h.enemyAdjusted - myWinRate : null;
   }
   return history;
 }

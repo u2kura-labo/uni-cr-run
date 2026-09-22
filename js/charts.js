@@ -82,9 +82,13 @@ export function lineChart(container, points, opts = {}) {
       s('path', { d: `${d}L${x(points.at(-1).x)},${y(0)}L${x(points[0].x)},${y(0)}Z`, class: 'area' }),
       s('path', { d, class: 'line' }),
     );
+    // opts.dots：各点に印を付ける（点ごとの class で色を変えられる）
+    if (opts.dots) {
+      for (const p of points) svg.append(s('circle', { cx: x(p.x), cy: y(p.y), r: 4, class: `dot ${p.cls ?? ''}` }));
+    }
     const last = points.at(-1);
     svg.append(
-      s('circle', { cx: x(last.x), cy: y(last.y), r: 4, class: 'dot' }),
+      s('circle', { cx: x(last.x), cy: y(last.y), r: 4, class: `dot ${last.cls ?? ''}` }),
       s('text', { x: x(last.x) + 8, y: y(last.y), class: 'end-label', 'dominant-baseline': 'middle' }, opts.endLabel ?? ''),
     );
   }

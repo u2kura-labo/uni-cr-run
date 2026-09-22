@@ -26,6 +26,19 @@
     <TextBlock Text="ボタンの代わりに押して撮れます（例：Ctrl+Shift+F12、Alt+F11）。" Foreground="{StaticResource Text2}" FontSize="12"/>
     <TextBox x:Name="HotkeyText" Margin="0,4,0,14"/>
 
+    <TextBlock Text="名前の鍵" FontWeight="SemiBold"/>
+    <TextBlock Foreground="{StaticResource Text2}" FontSize="12" TextWrapping="Wrap"
+               Text="他のプレイヤーの名前は、この鍵で暗号化して保存します。ファイルが人の手に渡っても名前は読めません。ビューアで名前を見るには、この鍵をビューアの「名前の鍵」に入れてください。鍵をなくすと、それまでの名前は戻せません。"/>
+    <DockPanel Margin="0,6,0,4">
+      <Button DockPanel.Dock="Right" Content="鍵のファイルを保存…" Style="{StaticResource DarkButton}" Margin="8,0,0,0" Click="OnSaveKey"/>
+      <Button DockPanel.Dock="Right" Content="鍵をコピー" Style="{StaticResource DarkButton}" Margin="8,0,0,0" Click="OnCopyKey"/>
+      <TextBlock x:Name="KeyIdText" VerticalAlignment="Center" FontFamily="Consolas"/>
+    </DockPanel>
+    <TextBlock x:Name="KeyStatus" Foreground="{StaticResource Text2}" FontSize="12" Margin="0,0,0,14"/>
+
+    <TextBlock Foreground="{StaticResource Text2}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
+               Text="個人で使うためのツールです。他のプレイヤーの名前が入ったデータや、その画面のスクリーンショットを共有しないでください。作成したファイルには、あなたのキャラクター名と鍵の番号が入ります。"/>
+
     <CheckBox x:Name="KeepImages" Foreground="{StaticResource Text}" Margin="0,0,0,18"
               Content="撮った画像も保存する（読み取りを直したあとに読み直せます）"/>
 

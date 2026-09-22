@@ -8,7 +8,7 @@ public class ResultParserTests
 {
     private static readonly DateTimeOffset At = new(2026, 9, 22, 21, 14, 3, TimeSpan.FromHours(9));
 
-    private static ParseResult Parse(FakeScreen screen, string? selfName = "Uni Kura", string? selfJob = null) =>
+    private static ParseResult Parse(FakeScreen screen, string? selfName = "Kinako Mochi", string? selfJob = null) =>
         ResultParser.Parse(screen.Words, screen, new ParseOptions
         {
             SelfName = selfName,
@@ -61,7 +61,7 @@ public class ResultParserTests
     {
         var r = Parse(FakeScreen.Build(), selfName: null);
         Assert.True(r.Success, string.Join("\n", r.Errors));
-        Assert.Equal("Uni Kura", r.Match!.Players.Single(p => p.Self).Name);
+        Assert.Equal("Kinako Mochi", r.Match!.Players.Single(p => p.Self).Name);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class ResultParserTests
     {
         var r = Parse(FakeScreen.Build(), selfName: "Someone Else");
         Assert.True(r.Success, string.Join("\n", r.Errors));
-        Assert.Equal("Uni Kura", r.Match!.Players.Single(p => p.Self).Name);
+        Assert.Equal("Kinako Mochi", r.Match!.Players.Single(p => p.Self).Name);
         Assert.Contains(r.Warnings, w => w.Contains("Someone Else"));
     }
 
@@ -143,7 +143,7 @@ public class ResultParserTests
         var a = Parse(FakeScreen.Build()).Match!;
         var b = ResultParser.Parse(FakeScreen.Build().Words, FakeScreen.Build(), new ParseOptions
         {
-            SelfName = "Uni Kura",
+            SelfName = "Kinako Mochi",
             CapturedAt = At.AddMinutes(1),
         }).Match!;
         Assert.Equal(a.Id, b.Id);

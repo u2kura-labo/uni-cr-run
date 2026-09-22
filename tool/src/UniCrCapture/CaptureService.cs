@@ -50,12 +50,14 @@ internal sealed class CaptureService(AppSettings settings)
         }
 
         var match = result.Match;
+        // 他のプレイヤーの名前を自分の鍵で暗号化して、作成者の識別子を付ける（id は平文のときのまま）
+        var self = match.Players.First(p => p.Self);
+        AppSettings.LoadOrCreateKey().Protect(match);
         var store = new JsonlStore(settings.SaveFolder);
         var written = store.Append(match, at);
         if (written) NextMap = null;
         if (result.Warnings.Count > 0) WriteOcrDump(imagePath, words, result);
 
-        var self = match.Players.First(p => p.Self);
         var summary = $"{(match.Teams[self.Team].Result == "win" ? "勝ち" : "負け")}・{GameData.JobName(self.Job)}・" +
                       $"{self.K}/{self.D}/{self.A}・与ダメ {self.Dmg:N0}";
         var details = new List<string> { summary };

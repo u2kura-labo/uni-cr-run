@@ -17,6 +17,21 @@ internal sealed class AppSettings
     public static string DefaultSaveFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Conflict Record");
 
+    private static string Folder =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ConflictRecord");
+
+    /// <summary>名前の鍵のファイル。はじめて使うときに作る。消すと、それまでの JSONL の名前は戻せなくなる。</summary>
+    public static string KeyPath => Path.Combine(Folder, "conflict-record.key");
+
+    public static UniCrCapture.Core.NameCipher LoadOrCreateKey()
+    {
+        if (File.Exists(KeyPath)) return UniCrCapture.Core.NameCipher.Parse(File.ReadAllText(KeyPath));
+        var cipher = UniCrCapture.Core.NameCipher.Create();
+        Directory.CreateDirectory(Folder);
+        File.WriteAllText(KeyPath, cipher.Export());
+        return cipher;
+    }
+
     private static string FilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ConflictRecord", "settings.json");
 

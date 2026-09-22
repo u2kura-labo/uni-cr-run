@@ -27,19 +27,19 @@ public sealed class FakeScreen : IPixelSource
     public sealed record Player(string Team, string Name, string World, string Tier, int K, int D, int A,
         long Dmg, long Taken, long Heal, string Crystal, bool Self = false);
 
-    /// <summary>実際のスクショの試合（K/D/A の合計もチーム合計と一致する）。</summary>
+    /// <summary>実際のスクショの試合の数字（K/D/A の合計もチーム合計と一致する）。名前は架空のものに置き換えてある。</summary>
     public static List<Player> RealMatch() => new()
     {
-        new("astra", "Caramel Affogato", "Garuda", "クリスタル", 0, 4, 14, 1324585, 1826297, 2442242, "6:55"),
-        new("astra", "Syuice Chan", "Ridill", "ダイヤモンド", 3, 3, 14, 2011841, 1124882, 1478040, "3:02"),
-        new("astra", "Uni Kura", "Valefor", "ダイヤモンド", 3, 2, 14, 1490909, 1357536, 2951730, "2:38", Self: true),
-        new("umbra", "Nadeko Oneeighty", "Atomos", "ダイヤモンド", 1, 4, 13, 1088078, 1937020, 1734590, "3:34"),
-        new("umbra", "Goro Majima", "Ultima", "クリスタル", 1, 4, 12, 1100614, 1848067, 3586999, "4:55"),
-        new("umbra", "Don Ikura", "Ixion", "クリスタル", 4, 2, 11, 2138685, 1712785, 1522450, "2:55"),
-        new("umbra", "Tal'ke Rainare", "Ridill", "ダイヤモンド", 2, 2, 10, 1325923, 1389235, 3469640, "2:03"),
-        new("astra", "Karasu Narakuno", "Ultima", "クリスタル", 6, 1, 6, 2255449, 1320875, 1321500, "0:38"),
-        new("astra", "Satoma Hal", "Asura", "ダイヤモンド", 6, 6, 6, 1967260, 1607051, 860779, "3:23"),
-        new("umbra", "Lala Everett", "Chocobo", "ダイヤモンド", 8, 6, 3, 1568341, 2218437, 1666650, "2:30"),
+        new("astra", "Maple Custard", "Garuda", "クリスタル", 0, 4, 14, 1324585, 1826297, 2442242, "6:55"),
+        new("astra", "Yuzu Pon", "Ridill", "ダイヤモンド", 3, 3, 14, 2011841, 1124882, 1478040, "3:02"),
+        new("astra", "Kinako Mochi", "Tiamat", "ダイヤモンド", 3, 2, 14, 1490909, 1357536, 2951730, "2:38", Self: true),
+        new("umbra", "Hinata Sunflower", "Atomos", "ダイヤモンド", 1, 4, 13, 1088078, 1937020, 1734590, "3:34"),
+        new("umbra", "Kaito Rain", "Ultima", "クリスタル", 1, 4, 12, 1100614, 1848067, 3586999, "4:55"),
+        new("umbra", "Sen Ebi", "Ixion", "クリスタル", 4, 2, 11, 2138685, 1712785, 1522450, "2:55"),
+        new("umbra", "Ne'lu Starwind", "Ridill", "ダイヤモンド", 2, 2, 10, 1325923, 1389235, 3469640, "2:03"),
+        new("astra", "Tsubame Kazehaya", "Ultima", "クリスタル", 6, 1, 6, 2255449, 1320875, 1321500, "0:38"),
+        new("astra", "Rio Aki", "Asura", "ダイヤモンド", 6, 6, 6, 1967260, 1607051, 860779, "3:23"),
+        new("umbra", "Nono Everlight", "Chocobo", "ダイヤモンド", 8, 6, 3, 1568341, 2218437, 1666650, "2:30"),
     };
 
     public sealed class Options
