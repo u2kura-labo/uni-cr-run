@@ -12,7 +12,7 @@ namespace UniCrCapture.Core;
 /// 1. 表の見出し（キャラクター名・ホームワールド・階級・総与ダメージ量 など）を探して、列の位置を決める
 /// 2. 見出しより下の語を行ごとにまとめ、列の位置で各マスに振り分ける
 /// 3. 見出しより上から、チームの勝敗・進行度・K/D/A 合計、ランク、経過時間を読む
-/// 4. 名前の文字の色でチーム（青 = アストラ、オレンジ = アンブラ）、設定の名前か行のハイライトで自分の行を決める
+/// 4. 名前の文字の色でチーム（どちらの色がどちらの隊かは、チーム欄の下地の色から合わせる）、設定の名前か行のハイライトで自分の行を決める
 /// 5. 各プレイヤーの K/D/A の合計とチーム合計を照らし合わせて、読み違いを警告する
 /// </summary>
 public static partial class ResultParser
@@ -65,6 +65,10 @@ public static partial class ResultParser
         var outcome = ReadOutcome(above, tableCenter);
         var rank = ReadRank(above);
         var duration = ReadDuration(above);
+        // どちらの隊が赤寄りの色かは、チーム欄の下地から合わせる（決め打ちにしない）
+        var astraIsWarm = AstraIsWarm(pixels,
+            TextLayout.FindInLines(above, "アストラ")?.Hit,
+            TextLayout.FindInLines(above, "アンブラ")?.Hit);
 
         // ---------- 4. プレイヤー ----------
         var players = new List<PlayerRecord>();
@@ -73,7 +77,7 @@ public static partial class ResultParser
         {
             var p = ToPlayer(row, result);
             if (p is null) continue;
-            p.Team = DetectTeam(row.NameWords, pixels) ?? "";
+            p.Team = DetectTeam(row.NameWords, pixels, astraIsWarm) ?? "";
             players.Add(p);
             rowBands.Add((row.Top, row.Bottom));
         }
@@ -364,6 +368,8 @@ public static partial class ResultParser
     {
         return string.Join(" ", Join(words)
             .Select(p => NameTrim().Replace(p, ""))
+            // 小文字にはさまれた I は、l（小文字のエル）の読み違い（Salim → SaIim）
+            .Select(p => MisreadL().Replace(p, "l"))
             // 小文字のすぐあとの大文字は、空白を読み落としたしるし
             // （FF14 の名前で大文字になるのは、先頭と ' - の次だけ）
             .SelectMany(p => LostSpace().Split(p))
@@ -578,8 +584,47 @@ public static partial class ResultParser
 
     // ---------- 色 ----------
 
-    /// <summary>名前の文字の色で、青（アストラ）かオレンジ（アンブラ）かを判定する。</summary>
-    public static string? DetectTeam(IReadOnlyList<OcrWord> nameWords, IPixelSource? pixels)
+    /// <summary>
+    /// チーム欄（「チーム・アストラ」「チーム・アンブラ」）の下地の色みを測って、
+    /// アストラが赤寄りの側かどうかを決める。
+    ///
+    /// 色を決め打ちにしてはいけない。実際の画面ではアストラが赤・アンブラが青で、
+    /// 逆に決め打ちしていたため、チームが入れ替わり、自分の勝敗まで反対に記録されていた。
+    /// 片方の欄しか読めなくても、その色みだけで決められる。
+    /// </summary>
+    private static bool AstraIsWarm(IPixelSource? pixels, TextHit? astraLabel, TextHit? umbraLabel)
+    {
+        var astra = Warmth(pixels, astraLabel);
+        var umbra = Warmth(pixels, umbraLabel);
+        if (astra is not null && umbra is not null) return astra > umbra;
+        if (astra is not null) return astra > 0;
+        if (umbra is not null) return umbra < 0;
+        return true; // どちらも測れないときは、実際に見た配色（アストラ＝赤寄り）に合わせる
+    }
+
+    /// <summary>その文字のまわりの色み。赤寄りなら正、青寄りなら負。</summary>
+    private static double? Warmth(IPixelSource? pixels, TextHit? at)
+    {
+        if (pixels is null || at is null) return null;
+        var pad = at.Value.Height;
+        var x0 = (int)Math.Max(0, at.Value.X - pad);
+        var x1 = (int)Math.Min(pixels.Width - 1, at.Value.Right + pad);
+        var y0 = (int)Math.Max(0, at.Value.Y - pad);
+        var y1 = (int)Math.Min(pixels.Height - 1, at.Value.Bottom + pad);
+        long sum = 0;
+        var n = 0;
+        for (var y = y0; y <= y1; y++)
+        for (var x = x0; x <= x1; x++)
+        {
+            var (r, _, b) = pixels.GetPixel(x, y);
+            sum += r - b;
+            n++;
+        }
+        return n == 0 ? null : (double)sum / n;
+    }
+
+    /// <summary>名前の文字の色で、どちらの隊かを判定する（どちらの色が赤寄りかは呼ぶ側が決める）。</summary>
+    public static string? DetectTeam(IReadOnlyList<OcrWord> nameWords, IPixelSource? pixels, bool astraIsWarm = true)
     {
         if (pixels is null || nameWords.Count == 0) return null;
         long r = 0, b = 0;
@@ -600,7 +645,7 @@ public static partial class ResultParser
             }
         }
         if (n < 8) return null;
-        return b > r ? "astra" : "umbra";
+        return r > b == astraIsWarm ? "astra" : "umbra";
     }
 
     /// <summary>設定の名前に近い行（読み違えを少し許す）。</summary>
@@ -679,6 +724,9 @@ public static partial class ResultParser
 
     [GeneratedRegex(@"(?<=[a-z])(?=[A-Z])")]
     private static partial Regex LostSpace();
+
+    [GeneratedRegex(@"(?<=[a-z])I(?=[a-z])")]
+    private static partial Regex MisreadL();
 
     [GeneratedRegex(@"[^A-Za-z]")]
     private static partial Regex WorldTrim();

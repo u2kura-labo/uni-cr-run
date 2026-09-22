@@ -80,9 +80,13 @@ internal sealed class CaptureService(AppSettings settings)
         // スクリーンショットの大きさ（解像度）が変わったときに効き目が変わってしまう。
         var heights = words.Where(area.Value.Holds).Select(w => w.Height).OrderBy(h => h).ToList();
         var textHeight = heights.Count > 0 ? heights[heights.Count / 2] : 0;
-        var zoom = textHeight > 0 ? Math.Clamp(48 / textHeight, 2.0, 8.0) : 4.0;
+        var zoom = textHeight > 0 ? (int)Math.Clamp(Math.Round(48 / textHeight), 2, 8) : 4;
         var reread = await WindowsOcr.RecognizeAreaAsync(image, area.Value, zoom, (int)Math.Max(8, textHeight));
-        return reread.Count == 0 ? words : ResultParser.ReplaceArea(words, area.Value, reread);
+
+        // 読み直したほうが語数が少ないなら、前のままにしておく（読み直しで悪くしない）
+        var before = words.Count(area.Value.Holds);
+        var after = reread.Count(area.Value.Holds);
+        return after < before ? words : ResultParser.ReplaceArea(words, area.Value, reread);
     }
 
     private static readonly JsonSerializerOptions DumpJson = new()

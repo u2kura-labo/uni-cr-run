@@ -32,11 +32,13 @@ internal static class WindowsOcr
     }
 
     /// <summary>
-    /// 画像の一部だけを、大きく拡大して読み直す。座標は元の画像のものに直して返す。
-    /// 1桁の数字が離れて並ぶ列（K / D / A）は、画面ぜんぶを渡すと丸ごと落ちることがあるが、
-    /// その部分だけを切り出して 4 倍にすると読める。
+    /// 画像の一部だけを、整数倍に拡大して読み直す。座標は元の画像のものに直して返す。
+    ///
+    /// 拡大は「ドットをそのまま並べる」方法で行う。ふつうの拡大（にじませる補間）だと
+    /// 細い数字の線がぼけて、1桁の数字が丸ごと読み落とされる。実際のスクリーンショット3枚では、
+    /// にじませる拡大だと K / D の列が落ちたが、そのまま並べる拡大だと 30 個すべて読めた。
     /// </summary>
-    public static async Task<List<OcrWord>> RecognizeAreaAsync(BitmapSource image, PixelRect area, double zoom, int pad = 12)
+    public static async Task<List<OcrWord>> RecognizeAreaAsync(BitmapSource image, PixelRect area, int zoom, int pad = 12)
     {
         var x = Math.Clamp((int)Math.Floor(area.X) - pad, 0, Math.Max(0, image.PixelWidth - 1));
         var y = Math.Clamp((int)Math.Floor(area.Y) - pad, 0, Math.Max(0, image.PixelHeight - 1));
@@ -46,16 +48,24 @@ internal static class WindowsOcr
 
         var crop = new CroppedBitmap(image, new Int32Rect(x, y, w, h));
         crop.Freeze();
-        var limit = (double)OcrEngine.MaxImageDimension / Math.Max(w, h);
-        var words = await ReadAsync(crop, Math.Max(1.0, Math.Min(zoom, limit)));
-        return words.Select(t => t with { X = t.X + x, Y = t.Y + y }).ToList();
+        var n = Math.Clamp(zoom, 1, Math.Max(1, OcrEngine.MaxImageDimension / Math.Max(w, h)));
+        var words = await ReadBgraAsync(Enlarge(ScreenCapture.ToBgra(crop), n));
+        return words
+            .Select(t => t with { X = t.X / n + x, Y = t.Y / n + y, Width = t.Width / n, Height = t.Height / n })
+            .ToList();
     }
 
     private static async Task<List<OcrWord>> ReadAsync(BitmapSource image, double scale)
     {
         var source = Math.Abs(scale - 1) < 0.01 ? image : new TransformedBitmap(image, new ScaleTransform(scale, scale));
-        var bgra = ScreenCapture.ToBgra(source);
+        var words = await ReadBgraAsync(ScreenCapture.ToBgra(source));
+        return words
+            .Select(t => t with { X = t.X / scale, Y = t.Y / scale, Width = t.Width / scale, Height = t.Height / scale })
+            .ToList();
+    }
 
+    private static async Task<List<OcrWord>> ReadBgraAsync(BgraImage bgra)
+    {
         var buffer = CryptographicBuffer.CreateFromByteArray(bgra.Pixels);
         using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, bgra.Width, bgra.Height, BitmapAlphaMode.Premultiplied);
         var result = await Engine.RecognizeAsync(bitmap);
@@ -65,8 +75,33 @@ internal static class WindowsOcr
         foreach (var word in line.Words)
         {
             var r = word.BoundingRect;
-            words.Add(new OcrWord(word.Text, r.X / scale, r.Y / scale, r.Width / scale, r.Height / scale));
+            words.Add(new OcrWord(word.Text, r.X, r.Y, r.Width, r.Height));
         }
         return words;
+    }
+
+    /// <summary>ドットをそのまま n 倍に並べる（色を混ぜない）。</summary>
+    private static BgraImage Enlarge(BgraImage src, int n)
+    {
+        if (n <= 1) return src;
+        var w = src.Width * n;
+        var pixels = new byte[w * src.Height * n * 4];
+        for (var sy = 0; sy < src.Height; sy++)
+        for (var sx = 0; sx < src.Width; sx++)
+        {
+            var i = (sy * src.Width + sx) * 4;
+            for (var dy = 0; dy < n; dy++)
+            {
+                var o = ((sy * n + dy) * w + sx * n) * 4;
+                for (var dx = 0; dx < n; dx++, o += 4)
+                {
+                    pixels[o] = src.Pixels[i];
+                    pixels[o + 1] = src.Pixels[i + 1];
+                    pixels[o + 2] = src.Pixels[i + 2];
+                    pixels[o + 3] = src.Pixels[i + 3];
+                }
+            }
+        }
+        return new BgraImage(pixels, w, src.Height * n);
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using UniCrCapture.Core;
 
 namespace UniCrCapture.Core.Tests;
@@ -13,6 +14,7 @@ public sealed class FakeScreen : IPixelSource
 
     public List<OcrWord> Words { get; } = new();
     private readonly List<(OcrWord Box, (byte, byte, byte) Color)> _colored = new();
+    private readonly List<(double X0, double Y0, double X1, double Y1, (byte, byte, byte) Color)> _panels = new();
     private (double Top, double Bottom)? _highlight;
     /// <summary>表ぜんぶを右にずらす量。左にチャットを置く（＝表の外がある）ときに使う。</summary>
     private double _tableAt;
@@ -21,6 +23,9 @@ public sealed class FakeScreen : IPixelSource
     {
         foreach (var (box, color) in _colored)
             if (x >= box.X && x < box.Right && y >= box.Y && y < box.Bottom && (x + y) % 3 != 0) // 文字の画素（すき間あり）
+                return color;
+        foreach (var (x0, y0, x1, y1, color) in _panels) // 上のチーム欄の下地
+            if (x >= x0 && x < x1 && y >= y0 && y < y1)
                 return color;
         if (_highlight is { } h && y >= h.Top && y <= h.Bottom) return (246, 228, 188); // 自分の行のハイライト（黄みがかった色）
         return (228, 222, 210); // 表の背景
@@ -59,6 +64,10 @@ public sealed class FakeScreen : IPixelSource
         public bool MisreadR { get; init; }
         /// <summary>画面の左にあるチャットが、表の行と同じ高さに出ている。</summary>
         public bool ChatOnTheLeft { get; init; }
+        /// <summary>アストラが赤、アンブラが青の配色（実際の画面はこちらだった）。</summary>
+        public bool AstraIsRed { get; init; }
+        /// <summary>名前の中の l（小文字のエル）が I（大文字のアイ）になる。</summary>
+        public bool MisreadL { get; init; }
         public string AstraKda { get; init; } = "K:18 D:16 A:54";
         public string UmbraKda { get; init; } = "K:16 D:18 A:49";
     }
@@ -99,6 +108,12 @@ public sealed class FakeScreen : IPixelSource
         s._tableAt = opt.ChatOnTheLeft ? 420 : 0;
 
         // ---- 上のバナー ----
+        // チーム欄の下地。赤寄り / 青寄りのどちらがどちらの隊かは、この色から決まる
+        var warmPanel = ((byte)221, (byte)164, (byte)153);
+        var coolPanel = ((byte)150, (byte)167, (byte)205);
+        s._panels.Add((90 + s._tableAt, 20, 540 + s._tableAt, 95, opt.AstraIsRed ? warmPanel : coolPanel));
+        s._panels.Add((585 + s._tableAt, 20, 1035 + s._tableAt, 95, opt.AstraIsRed ? coolPanel : warmPanel));
+
         s.Japanese("チーム・アストラ", 115, 43, h);
         s.Japanese("進行度", 360, 34, h);
         s.Latin("50.1%", 435, 30, 95, 22);
@@ -143,11 +158,16 @@ public sealed class FakeScreen : IPixelSource
             var p = players[i];
             var y = FirstRowY + i * RowStep;
             if (opt.NoiseFromJobIcons) s.Latin("回", 10, y, 14, 16);
-            var color = p.Team == "astra" ? ((byte)40, (byte)70, (byte)170) : ((byte)215, (byte)95, (byte)55);
+            // 名前の色は、上のチーム欄と同じ側の色になる
+            var warmText = ((byte)215, (byte)95, (byte)55);
+            var coolText = ((byte)40, (byte)70, (byte)170);
+            var color = (p.Team == "astra") == opt.AstraIsRed ? warmText : coolText;
             var nameX = 47.0;
             foreach (var part in p.Name.Split(' '))
             {
-                s.Word(part, ref nameX, y, 9.0, h, opt.MisreadR, color);
+                // l（小文字のエル）は、小文字にはさまれているときに I と読み違えられる
+                var text = opt.MisreadL ? Regex.Replace(part, "(?<=[a-z])l(?=[a-z])", "I") : part;
+                s.Word(text, ref nameX, y, 9.0, h, opt.MisreadR, color);
                 nameX += 6; // 語と語のあいだ（読み違いで切れたところより、はっきり広い）
             }
             var worldX = 270.0;

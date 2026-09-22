@@ -184,6 +184,40 @@ public class ResultParserTests
             r.Match!.Players.Select(p => (p.Name, p.World)));
     }
 
+    /// <summary>
+    /// 実際の画面ではアストラが赤・アンブラが青だった。青をアストラと決め打ちしていたため、
+    /// 2つの隊が丸ごと入れ替わり、自分の勝敗まで反対に記録されていた。
+    /// どちらの配色でも、チーム欄の下地の色に合わせて正しく振り分けられること。
+    /// </summary>
+    [Theory]
+    [InlineData(false)] // アストラが青
+    [InlineData(true)]  // アストラが赤
+    public void TellsTheTeamsApartWhicheverSideIsRed(bool astraIsRed)
+    {
+        var r = Parse(FakeScreen.Build(opt: new FakeScreen.Options { AstraIsRed = astraIsRed }));
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Empty(r.Warnings);
+        Assert.Equal(FakeScreen.RealMatch().Select(e => (e.Name, e.Team)),
+            r.Match!.Players.Select(p => (p.Name, p.Team)));
+        // 自分はアストラなので、勝ちとして記録される
+        Assert.Equal("astra", r.Match.Players.Single(p => p.Self).Team);
+        Assert.Equal("win", r.Match.Teams["astra"].Result);
+    }
+
+    /// <summary>
+    /// l（小文字のエル）は I と読み違えられる（Salim → SaIim）。
+    /// 「小文字のあとの大文字は空白の読み落とし」の規則をそのまま当てると、Sa Iim と割れてしまう。
+    /// </summary>
+    [Fact]
+    public void KeepsNamesTogetherWhenLIsMisreadAsCapitalI()
+    {
+        var r = Parse(FakeScreen.Build(opt: new FakeScreen.Options { MisreadL = true }));
+
+        Assert.True(r.Success, string.Join("\n", r.Errors));
+        Assert.Equal(FakeScreen.RealMatch().Select(e => e.Name), r.Match!.Players.Select(p => p.Name));
+    }
+
     [Fact]
     public void WarnsWhenTeamTotalsDoNotAddUp()
     {
