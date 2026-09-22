@@ -159,6 +159,10 @@ export function barChart(container, rows, opts = {}) {
     );
   }
   svg.append(s('line', { x1: m.left, x2: m.left, y1: m.top, y2: height - m.bottom, class: 'axis' }));
+  // 基準線は棒と数字の下に描く（数字に線が重ならないように）
+  if (opts.ref != null) {
+    svg.append(s('line', { x1: x(opts.ref), x2: x(opts.ref), y1: m.top, y2: height - m.bottom, class: 'ref' }));
+  }
 
   rows.forEach((r, i) => {
     const cy = m.top + i * band + band / 2;
@@ -180,9 +184,6 @@ export function barChart(container, rows, opts = {}) {
     g.addEventListener('blur', hideTooltip);
     svg.append(g);
   });
-  if (opts.ref != null) {
-    svg.append(s('line', { x1: x(opts.ref), x2: x(opts.ref), y1: m.top, y2: height - m.bottom, class: 'ref' }));
-  }
   container.replaceChildren(svg);
 }
 

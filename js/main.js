@@ -2,11 +2,11 @@ import { parseJsonl, normalizeMatch, TEAMS } from './schema.js';
 import { loadAll, addRecords, clearAll } from './store.js';
 import {
   applyFilter, summary, rollingWinRate, groupBy, peerComparison,
-  buildBaselines, buildPlayerHistory, scoreMatch, performanceIndex, playerKey, byTier,
+  buildBaselines, buildPlayerHistory, scoreMatch, performanceIndex, playerKey, byTier, tierOf,
 } from './stats.js';
 import { lineChart, barChart, divergingChart } from './charts.js';
-import { jobName } from './jobs.js';
-import { h } from './dom.js';
+import { jobName, roleGroup } from './jobs.js';
+import { h, s as svgEl } from './dom.js';
 import * as f from './format.js';
 
 const ROLLING_WINDOW = 10;
@@ -139,22 +139,110 @@ function kpi(label, value, sub) {
   );
 }
 
-function renderKpis(matches) {
+// 勝率のリング（メーター）。50% の位置に目盛り
+function winRing(rate) {
+  const r = 48;
+  const c = 2 * Math.PI * r;
+  const v = Math.max(0, Math.min(1, rate ?? 0));
+  return svgEl('svg', { class: 'ring', viewBox: '0 0 112 112', 'aria-hidden': 'true' },
+    svgEl('circle', { cx: 56, cy: 56, r, fill: 'none', 'stroke-width': 10, class: 'track' }),
+    svgEl('circle', {
+      cx: 56, cy: 56, r, fill: 'none', 'stroke-width': 10, class: 'fill',
+      'stroke-dasharray': `${c * v} ${c}`, transform: 'rotate(-90 56 56)',
+    }),
+    svgEl('line', { x1: 56, y1: 112 - 2, x2: 56, y2: 112 - 16, class: 'mid', 'stroke-width': 2 }),
+  );
+}
+
+const TIER_COLORS = {
+  ブロンズ: ['#e0a070', '#8a4b22'],
+  シルバー: ['#eef2f7', '#8a96a8'],
+  ゴールド: ['#ffe08a', '#b7861b'],
+  プラチナ: ['#b8fff0', '#3aa596'],
+  ダイヤモンド: ['#c7ecff', '#3987e5'],
+  クリスタル: ['#f0dcff', '#8a5cf0'],
+};
+
+function emblem(tier) {
+  const [light, dark] = TIER_COLORS[tier] ?? ['#c3cad6', '#6d7b91'];
+  const id = `emb-${Math.abs([...(tier ?? '')].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) % 1e6}`;
+  return svgEl('svg', { class: 'emblem', viewBox: '0 0 48 48', 'aria-hidden': 'true' },
+    svgEl('defs', {}, svgEl('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 },
+      svgEl('stop', { offset: 0, 'stop-color': light }),
+      svgEl('stop', { offset: 1, 'stop-color': dark }),
+    )),
+    svgEl('path', { d: 'M24 2 44 14v20L24 46 4 34V14Z', fill: `url(#${id})` }),
+    svgEl('path', { d: 'M24 10 34 24 24 38 14 24Z', fill: '#fff', opacity: 0.35 }),
+  );
+}
+
+function renderHero(matches) {
   const sum = summary(matches);
-  const latestRank = matches.find((m) => m.rank?.after)?.rank.after;
-  $('#kpis').replaceChildren(
-    h('div', { class: 'kpi hero' },
-      h('div', { class: 'kpi-label' }, '勝率'),
-      h('div', { class: 'kpi-value' }, f.pct(sum.winRate, 1)),
-      h('div', { class: 'kpi-sub' }, `${sum.wins} 勝 ${sum.n - sum.wins} 敗 / ${sum.n} 試合`),
+  const recent = matches.slice(0, 10);
+  let streak = 0;
+  for (const m of matches) {
+    if (m.result !== matches[0].result) break;
+    streak++;
+  }
+  const recentWins = recent.filter((m) => m.result === 'win').length;
+  const rankMatch = matches.find((m) => m.rank?.after);
+  const rank = rankMatch?.rank.after ?? null;
+  const tier = tierOf(rank);
+  const firstRank = [...matches].reverse().find((m) => m.rank?.before)?.rank.before ?? null;
+  const [whole, frac] = f.pct(sum.winRate, 1).replace('%', '').split('.');
+
+  $('#hero').replaceChildren(
+    h('div', { class: 'hero-main' },
+      winRing(sum.winRate),
+      h('div', {},
+        h('div', { class: 'eyebrow' }, 'Win rate'),
+        h('div', { class: 'hero-rate' }, whole, frac != null ? h('small', {}, `.${frac}%`) : null),
+        h('div', { class: 'hero-sub' }, h('strong', {}, `${sum.wins}W ${sum.n - sum.wins}L`), `・${sum.n} 試合`),
+      ),
     ),
+    h('div', { class: 'form' },
+      h('div', { class: 'eyebrow' }, 'Recent form'),
+      h('div', { class: 'form-strip', role: 'list', 'aria-label': '直近 10 試合（新しい順）' },
+        recent.map((m) => h('span', {
+          class: `form-pip ${m.result}`,
+          role: 'listitem',
+          title: `${f.dateTime(m.time)}・${RESULT_NAMES[m.result]}・${jobName(m.self.job)}`,
+        }, m.result === 'win' ? 'W' : 'L')),
+      ),
+      h('div', { class: 'form-note' },
+        h('span', { class: 'streak' }, `${streak} ${matches[0].result === 'win' ? '連勝中' : '連敗中'}`),
+        `・直近 ${recent.length} 試合で ${recentWins} 勝`,
+      ),
+    ),
+    h('div', { class: 'rank-card' },
+      emblem(tier),
+      h('div', {},
+        h('div', { class: 'eyebrow' }, 'Rank'),
+        rank
+          ? h('div', {}, h('span', { class: 'rank-tier' }, tier ?? rank), tier ? h('span', { class: 'rank-stage' }, ` ${rank.slice(tier.length)}`) : null)
+          : h('div', { class: 'rank-tier' }, '–'),
+        firstRank && firstRank !== rank ? h('div', { class: 'rank-from' }, `期間の最初：${firstRank}`) : null,
+      ),
+    ),
+  );
+}
+
+function renderKpis(matches) {
+  renderHero(matches);
+  const sum = summary(matches);
+  $('#kpis').replaceChildren(
     kpi('平均 K / D / A', `${f.dec(sum.avg.k)} / ${f.dec(sum.avg.d)} / ${f.dec(sum.avg.a)}`),
     kpi('平均 与ダメージ', f.big(sum.avg.dmg)),
     kpi('平均 与ヒール', f.big(sum.avg.heal)),
     kpi('平均 移送時間', f.clock(sum.avg.crystal)),
     kpi('平均 指数', f.int(avgIndex(matches)), '同ジョブ平均 = 100'),
-    kpi('最新のランク', latestRank ?? '–'),
   );
+}
+
+// ジョブ名に役割の色の印を付ける
+function jobChip(code) {
+  const role = roleGroup(code);
+  return h('span', { class: role ? `job ${role}` : 'job' }, jobName(code));
 }
 
 function avgIndex(matches) {
@@ -283,7 +371,7 @@ function renderMatchList(matches) {
       renderMatchList(matches);
     };
     body.append(h('tr', {
-      class: `match-row${open ? ' open' : ''}`,
+      class: `match-row ${m.result}${open ? ' open' : ''}`,
       tabindex: 0,
       'aria-expanded': String(open),
       onclick: toggle,
@@ -291,7 +379,7 @@ function renderMatchList(matches) {
     },
       h('td', {}, f.dateTime(m.time)),
       h('td', {}, resultBadge(m.result)),
-      h('td', {}, jobName(m.self.job)),
+      h('td', {}, jobChip(m.self.job)),
       h('td', {}, m.map ?? '不明'),
       h('td', { class: 'num' }, `${m.self.k} / ${m.self.d} / ${m.self.a}`),
       h('td', { class: 'num' }, f.big(m.self.dmg)),
@@ -349,7 +437,7 @@ function scoreboard(m) {
       const team = m.teams[t];
       const mine = t === m.self.team;
       return h('div', { class: 'team' },
-        h('div', { class: 'team-head' },
+        h('div', { class: `team-head ${t}` },
           h('span', { class: `team-key ${t}`, 'aria-hidden': 'true' }),
           h('strong', {}, `チーム・${TEAM_NAMES[t]}`),
           h('span', { class: 'muted' }, mine ? '（味方）' : '（敵）'),
@@ -366,7 +454,7 @@ function scoreboard(m) {
           h('tbody', {}, m.players.filter((p) => p.team === t).map((p) => {
             const sc = scored.get(p);
             return h('tr', { class: p.self ? 'self' : '' },
-              h('td', {}, jobName(p.job)),
+              h('td', {}, jobChip(p.job)),
               h('td', {}, playerButton(p), p.self ? h('span', { class: 'you' }, '自分') : null),
               h('td', {}, p.world),
               h('td', {}, p.tier),
@@ -502,7 +590,7 @@ function openPlayer(key) {
         h('td', {}, f.dateTime(g.match.time)),
         h('td', {}, relationText(g)),
         h('td', {}, resultBadge(g.match.result)),
-        h('td', {}, jobName(g.player.job)),
+        h('td', {}, jobChip(g.player.job)),
         h('td', {}, g.match.map ?? '不明'),
         h('td', { class: 'num' }, `${g.player.k} / ${g.player.d} / ${g.player.a}`),
         h('td', { class: 'num' }, f.big(g.player.dmg)),
@@ -533,15 +621,13 @@ function showMatch(id) {
 // ---------- 操作 ----------
 
 function setupTheme() {
+  // ダークが基本。切り替えたらこのブラウザに覚えておく
   const root = document.documentElement;
   let saved = null;
   try { saved = localStorage.getItem('theme'); } catch { /* 保存できなくても動く */ }
-  if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
+  root.dataset.theme = saved === 'light' ? 'light' : 'dark';
   $('#theme').addEventListener('click', () => {
-    const dark = root.dataset.theme
-      ? root.dataset.theme === 'dark'
-      : matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'light' : 'dark';
+    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
     try { localStorage.setItem('theme', root.dataset.theme); } catch { /* 同上 */ }
     render();
   });

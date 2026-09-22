@@ -5,14 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>uni-cr-run</title>
   <meta name="description" content="クリスタルコンフリクトの戦績ビューア。データはこのブラウザの中だけに保存されます。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="css/style.css">
   <script type="module" src="js/main.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <h1>uni-cr-run</h1>
-      <p class="muted">クリスタルコンフリクト戦績ビューア</p>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <defs>
+          <linearGradient id="crystal" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8fe3ff"/>
+            <stop offset="0.55" stop-color="#3987e5"/>
+            <stop offset="1" stop-color="#d95926"/>
+          </linearGradient>
+        </defs>
+        <path d="M16 1 27 12 16 31 5 12Z" fill="url(#crystal)"/>
+        <path d="M16 1 21 12 16 31 11 12Z" fill="#fff" opacity=".22"/>
+        <path d="M5 12h22" stroke="#fff" stroke-opacity=".35" stroke-width="1"/>
+      </svg>
+      <div>
+        <h1>uni-cr-run</h1>
+        <p class="muted">Crystalline Conflict Tracker</p>
+      </div>
     </div>
     <div class="actions">
       <span id="count" class="muted"></span>
@@ -27,6 +44,7 @@
     <div id="notice" class="notice" role="status" hidden></div>
 
     <section id="empty" class="empty" hidden>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 1 27 12 16 31 5 12Z" fill="url(#crystal)"/><path d="M16 1 21 12 16 31 11 12Z" fill="#fff" opacity=".22"/></svg>
       <h2>matches.jsonl をここにドロップ</h2>
       <p>読み込んだ戦績は、このブラウザの中（IndexedDB）にだけ保存されます。サーバーには送信しません。</p>
       <p>次からはページを開くだけで表示されます。新しい試合が増えたら、同じファイルをもう一度ドロップしてください（取り込み済みの試合は自動で飛ばします）。</p>
@@ -54,27 +72,28 @@
       <p id="filtered-empty" class="muted" hidden>この条件に合う試合はありません。</p>
 
       <div id="filtered">
-        <section id="kpis" class="kpis" aria-label="まとめ"></section>
+        <section id="hero" class="hero" aria-label="勝率と直近の流れ"></section>
+        <section id="kpis" class="kpis" aria-label="平均の成績"></section>
 
         <section class="card">
-          <h2>勝率の推移</h2>
+          <h2 data-en="TREND">勝率の推移</h2>
           <p class="muted">直近 10 試合ごとの勝率。横線は 50%。</p>
           <div id="trend-chart" class="chart-box"></div>
         </section>
 
         <div class="grid-2">
           <section class="card">
-            <h2>ジョブ別</h2>
+            <h2 data-en="JOBS">ジョブ別</h2>
             <div id="job-chart" class="chart-box"></div>
             <div id="job-table" class="table-scroll"></div>
           </section>
           <section class="card">
-            <h2>マップ別</h2>
+            <h2 data-en="MAPS">マップ別</h2>
             <div id="map-chart" class="chart-box"></div>
             <div id="map-table" class="table-scroll"></div>
           </section>
           <section class="card">
-            <h2>ランク別</h2>
+            <h2 data-en="RANKS">ランク別</h2>
             <p class="muted">試合前のランクごとの勝率。</p>
             <div id="tier-chart" class="chart-box"></div>
             <div id="tier-table" class="table-scroll"></div>
@@ -82,7 +101,7 @@
         </div>
 
         <section class="card">
-          <h2>同じジョブの人との比較</h2>
+          <h2 data-en="VS SAME JOB">同じジョブの人との比較</h2>
           <p id="peer-note" class="muted"></p>
           <div class="legend" aria-hidden="true">
             <span><span class="swatch pos"></span>同ジョブ平均より多い</span>
@@ -93,7 +112,7 @@
         </section>
 
         <section class="card">
-          <h2>プレイヤー</h2>
+          <h2 data-en="PLAYERS">プレイヤー</h2>
           <p class="muted">試合で一緒になった人の記録（期間・ジョブの絞り込みに関係なく全試合から）。味方のときの勝率が普段より高い人は、組むと勝ちやすい相手です。</p>
           <div class="filters inline">
             <label>検索 <input id="player-search" type="search" placeholder="キャラクター名・ワールド" autocomplete="off"></label>
@@ -112,7 +131,7 @@
         </section>
 
         <section class="card">
-          <h2>試合一覧</h2>
+          <h2 data-en="MATCHES">試合一覧</h2>
           <p class="muted">行をクリックすると、その試合の全員の成績を表示します。</p>
           <div id="match-list"></div>
         </section>

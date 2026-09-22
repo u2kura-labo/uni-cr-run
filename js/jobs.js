@@ -31,6 +31,13 @@ export const ROLE_NAMES = {
   caster: 'キャスター',
 };
 
+// タンク / ヒーラー / DPS の3つにまとめた役割（色分け用）
+export function roleGroup(code) {
+  const role = JOBS[code]?.role;
+  if (!role) return null;
+  return role === 'tank' || role === 'healer' ? role : 'dps';
+}
+
 export function jobName(code) {
   if (!code) return '不明';
   return JOBS[code]?.name ?? code;
