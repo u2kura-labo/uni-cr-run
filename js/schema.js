@@ -26,6 +26,17 @@ function fail(msg) {
 
 // 保存してある生データ（JSON オブジェクト）を、画面で使う形に変換する。
 // 形式が壊れていれば例外、答え合わせが合わないだけなら warnings に積む。
+// FF14 のキャラクター名は「名 姓」の 2 語と決まっている。3 語以上になるのは、
+// 名前のすぐ左にあるジョブのアイコンの端が文字として読まれて、頭に付いたとき
+// （Sugar Last が Ney Sugar Last、Sd Sugar Last になる）。
+// そのままだと同じ人が別人として数えられるので、後ろの 2 語だけを名前として扱う。
+// ツール側で直しても、すでに作ったファイルは直らないので、ここでも直す。
+function cleanName(name) {
+  if (typeof name !== 'string') return '';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 2 ? parts.slice(-2) : parts).join(' ');
+}
+
 export function normalizeMatch(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) fail('オブジェクトではありません');
   if (raw.v !== SCHEMA_VERSION) fail(`未対応のバージョンです (v=${JSON.stringify(raw.v)})`);
@@ -63,7 +74,7 @@ export function normalizeMatch(raw) {
     if (p.crystal != null && crystal === null) fail(`${where}.crystal が時間として読めません`);
     return {
       team: p.team,
-      name: typeof p.name === 'string' ? p.name : '',
+      name: cleanName(p.name),
       world: typeof p.world === 'string' ? p.world : '',
       tier: typeof p.tier === 'string' ? p.tier : '',
       job: typeof p.job === 'string' && p.job !== '' ? p.job.toUpperCase() : null,

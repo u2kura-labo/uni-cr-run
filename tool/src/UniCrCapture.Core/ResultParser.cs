@@ -521,7 +521,7 @@ public static partial class ResultParser
     /// </summary>
     private static string CleanName(IReadOnlyList<OcrWord> words)
     {
-        return string.Join(" ", Join(words)
+        var parts = Join(words)
             .Select(p => NameTrim().Replace(p, ""))
             // 小文字にはさまれた I は、l（小文字のエル）の読み違い（Salim → SaIim）
             .Select(p => MisreadL().Replace(p, "l"))
@@ -529,7 +529,13 @@ public static partial class ResultParser
             // （FF14 の名前で大文字になるのは、先頭と ' - の次だけ）
             .SelectMany(p => LostSpace().Split(p))
             .Where(p => p.Length >= 2 && char.IsLetter(p[0]))
-            .Select(FixCase));
+            .Select(FixCase)
+            .ToList();
+        // FF14 の名前は「名 姓」の 2 語と決まっている。3 語以上になるのは、名前のすぐ左にある
+        // ジョブのアイコンの端が文字として読まれて、頭に付いたとき
+        // （Sugar Last が Ney Sugar Last、Sd Sugar Last になる）。後ろの 2 語だけを採る。
+        if (parts.Count > 2) parts = parts.TakeLast(2).ToList();
+        return string.Join(" ", parts);
     }
 
     /// <summary>ワールド名は1語なので、間隔に関係なくつなぐ。</summary>
