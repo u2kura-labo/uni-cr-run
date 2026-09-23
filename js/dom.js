@@ -11,6 +11,14 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// 中身を入れ替える。replaceChildren は null をそのまま "null" という文字にしてしまうので、
+// h() と同じように間引いてから渡す。
+export function fill(el, ...children) {
+  el.replaceChildren();
+  append(el, children);
+  return el;
+}
+
 function append(el, children) {
   for (const c of children.flat()) {
     if (c == null || c === false) continue;

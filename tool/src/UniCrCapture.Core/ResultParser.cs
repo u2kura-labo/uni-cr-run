@@ -65,8 +65,11 @@ public static partial class ResultParser
         var outcome = ReadOutcome(above, tableCenter);
         var rank = ReadRank(above);
         var duration = ReadDuration(above);
-        // どちらの隊が赤寄りの色かは、チーム欄の下地から合わせる（決め打ちにしない）
-        var astraIsWarm = AstraIsWarm(pixels, FindLowest(above, "アストラ"), FindLowest(above, "アンブラ"));
+        // どちらの隊が赤寄りの色かは、画面の下地から合わせる（決め打ちにしない）
+        var warm = AstraIsWarm(pixels, above);
+        if (warm is null)
+            result.Warnings.Add("隊の色を測れなかったので、アストラ＝赤寄りとして扱いました。チームが入れ替わっていないか確認してください。");
+        var astraIsWarm = warm ?? true;
 
         // ---------- 4. プレイヤー ----------
         // ジョブのアイコンは、名前のすぐ左に並ぶ四角
@@ -766,22 +769,63 @@ public static partial class ResultParser
 
     // ---------- 色 ----------
 
+    /// <summary>左右の色みの差が、これより小さければ「決められない」とみなす。</summary>
+    private const double WarmthMargin = 20;
+
     /// <summary>
-    /// チーム欄（「チーム・アストラ」「チーム・アンブラ」）の下地の色みを測って、
-    /// アストラが赤寄りの側かどうかを決める。
+    /// アストラが赤寄りの側かどうかを決める。決められなければ null。
     ///
     /// 色を決め打ちにしてはいけない。実際の画面ではアストラが赤・アンブラが青で、
     /// 逆に決め打ちしていたため、チームが入れ替わり、自分の勝敗まで反対に記録されていた。
-    /// 片方の欄しか読めなくても、その色みだけで決められる。
+    ///
+    /// 隊の名前（「チーム・アストラ」）を探してその周りを測るやり方は、当てにならなかった。
+    /// 「アンブラ」が「アンフラ」と読めるだけで測る場所が変わり、7 秒差で撮った同じ画面が
+    /// 逆のチームになった（勝敗も反対になった）。
+    /// なので、まずは文字の読みに頼らない「進行度の欄が並ぶ帯」の下地で決める。
+    /// この帯は隊の色で塗られていて、左がアストラ・右がアンブラと決まっている。
     /// </summary>
-    private static bool AstraIsWarm(IPixelSource? pixels, TextHit? astraLabel, TextHit? umbraLabel)
+    private static bool? AstraIsWarm(IPixelSource? pixels, List<VisualLine> above)
     {
-        var astra = Warmth(pixels, astraLabel);
-        var umbra = Warmth(pixels, umbraLabel);
-        if (astra is not null && umbra is not null) return astra > umbra;
-        if (astra is not null) return astra > 0;
-        if (umbra is not null) return umbra < 0;
-        return true; // どちらも測れないときは、実際に見た配色（アストラ＝赤寄り）に合わせる
+        var banner = BannerIsWarmOnLeft(pixels, above);
+        if (banner is not null) return banner;
+
+        // 帯が測れないときだけ、隊の名前のまわりを測る
+        var astra = Warmth(pixels, FindLowest(above, "アストラ"));
+        var umbra = Warmth(pixels, FindLowest(above, "アンブラ"));
+        if (astra is not null && umbra is not null)
+            return Math.Abs(astra.Value - umbra.Value) < WarmthMargin ? null : astra > umbra;
+        var one = astra ?? umbra;
+        if (one is null || Math.Abs(one.Value) < WarmthMargin) return null;
+        return astra is not null ? one > 0 : one < 0;
+    }
+
+    /// <summary>
+    /// 進行度の欄が並ぶ帯の下地の色みを、左右で比べる。
+    /// 「進行度」は 3 文字で読み違えが起きにくく、左右に必ず 1 つずつ出るので、位置の目印に使える。
+    /// </summary>
+    private static bool? BannerIsWarmOnLeft(IPixelSource? pixels, List<VisualLine> above)
+    {
+        if (pixels is null) return null;
+        var hits = above.SelectMany(l => TextLayout.FindAll(l, "進行度"))
+            .Where(h => h.Height > 0).OrderBy(h => h.X).ToList();
+        if (hits.Count != 2) return null;
+        // 左右の帯が混ざらないよう、2 つの真ん中で区切る
+        var mid = (hits[0].CenterX + hits[1].CenterX) / 2;
+        var left = BandWarmth(pixels, hits[0], double.MinValue, mid);
+        var right = BandWarmth(pixels, hits[1], mid, double.MaxValue);
+        if (left is null || right is null) return null;
+        return Math.Abs(left.Value - right.Value) < WarmthMargin ? null : left > right;
+    }
+
+    /// <summary>「進行度」のまわりを、行の高さぶん上下・左右に広げた帯の色み。</summary>
+    private static double? BandWarmth(IPixelSource pixels, TextHit at, double minX, double maxX)
+    {
+        var pad = at.Height * 1.5;
+        var x0 = (int)Math.Max(Math.Max(0, at.X - pad), minX);
+        var x1 = (int)Math.Min(Math.Min(pixels.Width - 1, at.Right + pad), maxX);
+        var y0 = (int)Math.Max(0, at.Y - at.Height);
+        var y1 = (int)Math.Min(pixels.Height - 1, at.Bottom + at.Height);
+        return AverageWarmth(pixels, x0, x1, y0, y1);
     }
 
     /// <summary>その文字のまわりの色み。赤寄りなら正、青寄りなら負。</summary>
@@ -793,6 +837,12 @@ public static partial class ResultParser
         var x1 = (int)Math.Min(pixels.Width - 1, at.Value.Right + pad);
         var y0 = (int)Math.Max(0, at.Value.Y - pad);
         var y1 = (int)Math.Min(pixels.Height - 1, at.Value.Bottom + pad);
+        return AverageWarmth(pixels, x0, x1, y0, y1);
+    }
+
+    /// <summary>その四角の中の色み。赤寄りなら正、青寄りなら負。</summary>
+    private static double? AverageWarmth(IPixelSource pixels, int x0, int x1, int y0, int y1)
+    {
         long sum = 0;
         var n = 0;
         for (var y = y0; y <= y1; y++)

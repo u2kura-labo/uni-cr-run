@@ -9,7 +9,7 @@ import {
 } from './stats.js';
 import { lineChart, barChart, divergingChart, showTooltip, hideTooltip } from './charts.js';
 import { jobName, roleGroup } from './jobs.js';
-import { h } from './dom.js';
+import { h, fill } from './dom.js';
 import * as f from './format.js';
 
 const PAGE_SIZE = 30;
@@ -140,7 +140,7 @@ function showNotice(message, errors = []) {
     ));
   }
   children.push(h('button', { class: 'link', type: 'button', onclick: () => { box.hidden = true; } }, '閉じる'));
-  box.replaceChildren(...children);
+  fill(box, ...children);
   box.hidden = false;
 }
 
@@ -209,14 +209,14 @@ function renderCharHead() {
   const c = chars.find((x) => x.key === state.filter.char);
   const box = $('#char-head');
   if (!c) {
-    box.replaceChildren(
+    fill(box, 
       h('div', { class: 'char-name' }, 'すべてのキャラ'),
       h('div', { class: 'char-meta' }, `${chars.length} キャラ・${state.matches.length} 試合`),
     );
     return;
   }
   const rank = c.last.rank?.after;
-  box.replaceChildren(
+  fill(box, 
     h('div', { class: 'char-name' }, c.name),
     h('div', { class: 'char-meta' }, [c.world, rank, `${c.n} 試合`, `最終 ${f.dateTime(c.last.time)}`].filter(Boolean).join('・')),
   );
@@ -225,7 +225,7 @@ function renderCharHead() {
 function renderFilters() {
   const chars = charList();
   const charSelect = $('#filter-char');
-  charSelect.replaceChildren(
+  fill(charSelect, 
     ...(chars.length > 1 ? [h('option', { value: '' }, `すべてのキャラ（${state.matches.length}）`)] : []),
     ...chars.map((c) => h('option', { value: c.key }, `${c.name}（${c.world}・${c.n}）`)),
   );
@@ -235,7 +235,7 @@ function renderFilters() {
   const jobs = groupBy(applyFilter(state.matches, { char: state.filter.char }), (m) => m.self.job ?? '');
   const select = $('#filter-job');
   const current = state.filter.job;
-  select.replaceChildren(
+  fill(select, 
     h('option', { value: '' }, 'すべてのジョブ'),
     ...jobs.map((g) => h('option', { value: g.key || '-' }, `${jobName(g.key || null)}（${g.n}）`)),
   );
@@ -269,7 +269,7 @@ function renderHero(matches) {
   const rank = matches.find((m) => m.rank?.after)?.rank.after ?? null;
   const firstRank = [...matches].reverse().find((m) => m.rank?.before)?.rank.before ?? null;
 
-  $('#hero').replaceChildren(
+  fill($('#hero'), 
     stat('勝率', f.pct(sum.winRate, 1), `${sum.wins} 勝 ${sum.n - sum.wins} 敗・${sum.n} 試合`, 'lg'),
     stat('スコア', f.int(avgScore(matches)), '同じ役割の中の位置（50 = 真ん中）', 'lg'),
     stat('ランク', rank ?? '–', firstRank && firstRank !== rank ? `期間の最初 ${firstRank}` : ''),
@@ -291,7 +291,7 @@ function renderKpis(matches) {
   renderHero(matches);
   const sum = summary(matches);
   const luck = luckBalance(matches, state.history);
-  $('#kpis').replaceChildren(
+  fill($('#kpis'), 
     stat('平均 K / D / A', `${f.dec(sum.avg.k)} / ${f.dec(sum.avg.d)} / ${f.dec(sum.avg.a)}`),
     stat('平均 与ダメージ', f.big(sum.avg.dmg)),
     stat('平均 与ヒール', f.big(sum.avg.heal)),
@@ -385,13 +385,13 @@ function renderGroups(matches) {
   const jobs = groupBy(matches, (m) => m.self.job ?? '');
   const maps = groupBy(matches, (m) => m.map ?? '');
   winRateBars($('#job-chart'), jobs, jobLabel, 'ジョブ別');
-  $('#job-table').replaceChildren(groupTable(jobs, 'ジョブ', jobLabel));
+  fill($('#job-table'), groupTable(jobs, 'ジョブ', jobLabel));
   winRateBars($('#map-chart'), maps, mapLabel, 'マップ別');
-  $('#map-table').replaceChildren(groupTable(maps, 'マップ', mapLabel));
+  fill($('#map-table'), groupTable(maps, 'マップ', mapLabel));
   const tierLabel = (k) => k || '不明';
   const tiers = byTier(matches);
   winRateBars($('#tier-chart'), tiers, tierLabel, 'ランク別');
-  $('#tier-table').replaceChildren(groupTable(tiers, 'ランク', tierLabel));
+  fill($('#tier-table'), groupTable(tiers, 'ランク', tierLabel));
 }
 
 function renderPeers(matches) {
@@ -414,7 +414,7 @@ function renderPeers(matches) {
     ],
   })), { ariaLabel: '同じジョブの平均との差' });
 
-  $('#peer-table').replaceChildren(h('table', { class: 'data' },
+  fill($('#peer-table'), h('table', { class: 'data' },
     h('thead', {}, h('tr', {},
       h('th', {}, '項目'),
       h('th', { class: 'num' }, '自分の平均'),
@@ -475,7 +475,7 @@ function renderMatchList(matches) {
     ? h('button', { type: 'button', class: 'secondary', onclick: () => { state.listLimit += PAGE_SIZE; renderMatchList(matches); } },
         `もっと見る（残り ${matches.length - shown.length} 試合）`)
     : null;
-  $('#match-list').replaceChildren(h('div', { class: 'table-scroll' }, table), more);
+  fill($('#match-list'), h('div', { class: 'table-scroll' }, table), more);
 }
 
 // スコアのマス。detail（その試合の内訳）があれば、クリック・カーソルで内訳を出す
@@ -663,10 +663,10 @@ function renderPlayers() {
     : `2 回以上会ったプレイヤー：${list.length} 人（全 ${all.length} 人）`;
 
   if (!shown.length) {
-    $('#players-list').replaceChildren(h('p', { class: 'muted' }, q ? '見つかりませんでした。' : 'まだ 2 回以上会ったプレイヤーはいません。'));
+    fill($('#players-list'), h('p', { class: 'muted' }, q ? '見つかりませんでした。' : 'まだ 2 回以上会ったプレイヤーはいません。'));
     return;
   }
-  $('#players-list').replaceChildren(h('div', { class: 'table-scroll' }, h('table', { class: 'data players' },
+  fill($('#players-list'), h('div', { class: 'table-scroll' }, h('table', { class: 'data players' },
     h('thead', {}, h('tr', {},
       h('th', {}, 'キャラクター'), h('th', {}, 'ワールド'), h('th', {}, 'よく使うジョブ'),
       h('th', { class: 'num' }, '会った回数'), h('th', { class: 'num' }, '一緒のときの勝率'),
@@ -700,7 +700,7 @@ function openPlayer(key) {
       : p.score >= 25 ? '平均より少し下です。'
       : 'かなり弱めです。') + `（${p.confidence.label}・${p.n} 回）`;
 
-  dlg.querySelector('.dialog-body').replaceChildren(
+  fill(dlg.querySelector('.dialog-body'), 
     h('div', { class: 'dialog-head' },
       h('div', {},
         h('h2', {}, p.name),
@@ -753,7 +753,7 @@ function showMatch(id) {
   const m = state.matches.find((x) => x.id === id);
   if (!m) return;
   const dlg = $('#match-dialog');
-  dlg.querySelector('.dialog-body').replaceChildren(
+  fill(dlg.querySelector('.dialog-body'), 
     h('div', { class: 'dialog-head' },
       h('div', {},
         h('h2', {}, `${f.dateTime(m.time)}　${RESULT_NAMES[m.result]}`),
