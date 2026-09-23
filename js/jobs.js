@@ -32,13 +32,16 @@ export const ROLE_NAMES = {
 };
 
 // タンク / ヒーラー / DPS の3つにまとめた役割（色分け用）
-export function roleGroup(code) {
+export const ROLE_GROUP_NAMES = { tank: 'タンク', healer: 'ヒーラー', dps: 'DPS' };
+
+// ジョブが分かればそこから、分からなければ記録されているロール（アイコンの色で分かる）を使う
+export function roleGroup(code, recorded = null) {
   const role = JOBS[code]?.role;
-  if (!role) return null;
-  return role === 'tank' || role === 'healer' ? role : 'dps';
+  if (role) return role === 'tank' || role === 'healer' ? role : 'dps';
+  return ROLE_GROUP_NAMES[recorded] ? recorded : null;
 }
 
-export function jobName(code) {
-  if (!code) return '不明';
-  return JOBS[code]?.name ?? code;
+export function jobName(code, recorded = null) {
+  if (code) return JOBS[code]?.name ?? code;
+  return ROLE_GROUP_NAMES[recorded] ?? '不明';
 }

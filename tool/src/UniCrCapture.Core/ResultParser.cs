@@ -119,11 +119,11 @@ public static partial class ResultParser
         {
             if (!teams.TryGetValue(t, out var team)) teams[t] = team = new TeamRecord();
             if (totalsRead.Contains(t)) continue;
+            // 合計の欄が読めなくても、各プレイヤーを足せば同じ数になる。わざわざ知らせない
             var members = players.Where(p => p.Team == t).ToList();
             team.K = members.Sum(p => p.K);
             team.D = members.Sum(p => p.D);
             team.A = members.Sum(p => p.A);
-            result.Warnings.Add($"{t} のチーム合計が読めなかったので、個人の合計を使いました。");
         }
         // WIN / LOSE の語の位置から決めたほうが確かなので、そちらを優先する
         if (outcome is not null)
@@ -265,6 +265,42 @@ public static partial class ResultParser
             }
         }
         return cells;
+    }
+
+    /// <summary>
+    /// チーム合計（K:8 D:0 A:26）の欄を、左右それぞれ返す。
+    /// この欄は色つきの字が模様の上に乗っていて、日本語のモデルでは数字が「ロ」になってしまう。
+    /// 「進行度」のすぐ下に並ぶので、その位置から範囲を決めて、英語のモデルで読み直す。
+    /// </summary>
+    public static IReadOnlyList<PixelRect> TeamTotalAreas(IReadOnlyList<OcrWord> words) =>
+        AreasNearProgress(words, (hit, h) =>
+            new PixelRect(hit.X - h * 2.5, hit.Bottom, hit.Right + h * 8 - (hit.X - h * 2.5), h * 2));
+
+    /// <summary>
+    /// 進行度の数字（0.0% / 100.0%）の欄を、左右それぞれ返す。
+    /// ここも色つきの字なので、日本語のモデルだと 100.0% が「1ロロ.ロ%」になり、1% と読めてしまう。
+    /// 「進行度」の字そのものは残したいので、その右どなりだけを指す。
+    /// </summary>
+    public static IReadOnlyList<PixelRect> ProgressAreas(IReadOnlyList<OcrWord> words) =>
+        AreasNearProgress(words, (hit, h) =>
+            new PixelRect(hit.Right + h * 0.1, hit.Y - h * 0.4, h * 8, h * 1.8));
+
+    private static IReadOnlyList<PixelRect> AreasNearProgress(IReadOnlyList<OcrWord> words,
+        Func<TextHit, double, PixelRect> area)
+    {
+        var areas = new List<PixelRect>();
+        var lines = TextLayout.GroupLines(words);
+        var header = FindHeader(lines);
+        if (header is null) return areas;
+
+        // 左右のチーム欄は同じ高さに並ぶので、1行に「進行度」が2つ出てくる
+        foreach (var line in lines.Where(l => l.Bottom < header.Value.Line.Top))
+        foreach (var hit in TextLayout.FindAll(line, "進行度"))
+        {
+            if (hit.Height <= 0) continue;
+            areas.Add(area(hit, hit.Height));
+        }
+        return areas;
     }
 
     /// <summary>area の中の語を、読み直した語で置き換える。</summary>

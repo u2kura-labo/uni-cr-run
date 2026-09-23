@@ -140,6 +140,7 @@ Windows 側のキャプチャツールとの取り決め。**1行 = 1試合**の
 | `dmg` `taken` `heal` | ✓ | 総与ダメージ量 / 総被ダメージ量 / 総与ヒール量 |
 | `self` | 1人だけ ✓ | 自分の行に `true`（画面ではハイライトされている行） |
 | `job` | | ジョブの略称（`PLD` `WAR` `DRK` `GNB` `WHM` `SCH` `AST` `SGE` `MNK` `DRG` `NIN` `SAM` `RPR` `VPR` `BRD` `MCH` `DNC` `BLM` `SMN` `RDM` `PCT`）。分からなければ `null` |
+| `role` | | `tank` / `healer` / `dps`。ジョブが分からなくても、アイコンの下地の色で分かる |
 | `name` `world` `tier` | | キャラクター名 / ホームワールド / 階級 |
 | `crystal` | | 移送時間。`"6:55"` 形式か秒数 |
 

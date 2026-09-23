@@ -114,6 +114,26 @@ internal static class ScreenCapture
         return new BgraImage(pixels, w, src.Height * n);
     }
 
+    /// <summary>
+    /// 色の鮮やかさを、字の濃さに置き換える（鮮やかなほど黒くする）。
+    /// チーム合計の欄は色つきの字が模様の上に乗っていて、明るさだけでは字と下地が分かれない。
+    /// </summary>
+    public static BgraImage ColourToInk(BgraImage src)
+    {
+        var pixels = new byte[src.Pixels.Length];
+        for (var i = 0; i < src.Pixels.Length; i += 4)
+        {
+            var b = src.Pixels[i];
+            var g = src.Pixels[i + 1];
+            var r = src.Pixels[i + 2];
+            var saturation = Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b));
+            var ink = (byte)Math.Clamp(255 - saturation * 2.2, 0, 255);
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = ink;
+            pixels[i + 3] = 255;
+        }
+        return new BgraImage(pixels, src.Width, src.Height);
+    }
+
     /// <summary>PNG のバイト列にする（Tesseract に渡すのに使う）。</summary>
     public static byte[] ToPng(BgraImage src)
     {

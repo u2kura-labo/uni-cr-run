@@ -20,7 +20,13 @@ internal static class LatinOcr
     private static bool _failed;
 
     /// <summary>名前に出る文字だけに絞る（数字や記号に化けるのを防ぐ）。</summary>
-    private const string NameLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'- ";
+    public const string NameLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'- ";
+
+    /// <summary>チーム合計（K:8 D:0 A:26）に出る文字だけ。</summary>
+    public const string TotalLetters = "KDA:0123456789 ";
+
+    /// <summary>進行度（100.0%）に出る文字だけ。</summary>
+    public const string PercentLetters = "0123456789.% ";
 
     public static bool Available => Engine is not null;
 
@@ -48,11 +54,13 @@ internal static class LatinOcr
     /// 1行ぶんの範囲を読む。1行として読ませるので、表のマスを1つずつ渡すこと。
     /// 返す語の位置は、元の画像の座標に直してある。
     /// </summary>
-    public static List<OcrWord> ReadLine(BitmapSource image, PixelRect area, int zoom = 4)
+    public static List<OcrWord> ReadLine(BitmapSource image, PixelRect area, int zoom = 4,
+        string letters = NameLetters, bool byColour = false)
     {
         var words = new List<OcrWord>();
         var engine = Engine;
         if (engine is null) return words;
+        engine.SetVariable("tessedit_char_whitelist", letters);
 
         var x = Math.Clamp((int)Math.Floor(area.X), 0, Math.Max(0, image.PixelWidth - 1));
         var y = Math.Clamp((int)Math.Floor(area.Y), 0, Math.Max(0, image.PixelHeight - 1));
@@ -64,7 +72,9 @@ internal static class LatinOcr
         {
             var crop = new CroppedBitmap(image, new Int32Rect(x, y, w, h));
             crop.Freeze();
-            var big = ScreenCapture.Enlarge(ScreenCapture.ToBgra(crop), zoom);
+            var bgra = ScreenCapture.ToBgra(crop);
+            if (byColour) bgra = ScreenCapture.ColourToInk(bgra);
+            var big = ScreenCapture.Enlarge(bgra, zoom);
 
             using var pix = Pix.LoadFromMemory(ScreenCapture.ToPng(big));
             using var page = engine.Process(pix, PageSegMode.SingleLine);

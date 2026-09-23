@@ -103,8 +103,8 @@ public class ResultParserTests
         Assert.True(r.Success, string.Join("\n", r.Errors));
         Assert.Equal("win", r.Match!.Teams["astra"].Result);
         Assert.Equal("lose", r.Match.Teams["umbra"].Result);
-        // 合計は読めなかったので、各プレイヤーの合計で埋める
-        Assert.Contains(r.Warnings, w => w.Contains("astra のチーム合計が読めなかった"));
+        // 合計の欄が読めなくても、各プレイヤーを足せば同じ数になる（わざわざ知らせない）
+        Assert.Empty(r.Warnings);
         Assert.Equal((18, 16, 54), (r.Match.Teams["astra"].K, r.Match.Teams["astra"].D, r.Match.Teams["astra"].A));
     }
 

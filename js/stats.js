@@ -110,7 +110,7 @@ export function buildDistribution(matches) {
   const groups = { dps: {}, healer: {}, tank: {}, unknown: {} };
   for (const m of matches) {
     for (const p of m.players) {
-      const role = roleGroup(p.job);
+      const role = roleGroup(p.job, p.role);
       for (const key of Object.keys(PERF_WEIGHTS)) {
         if (p[key] == null) continue;
         (groups.unknown[key] ??= []).push(p[key]);
@@ -139,7 +139,7 @@ function percentile(sorted, v) {
 // reliable：ジョブが分かっていて、その役割の記録が十分にある（= 同じ役割の中の位置を出せた）
 export function scoreMatch(m, dist) {
   return m.players.map((p) => {
-    const role = roleGroup(p.job);
+    const role = roleGroup(p.job, p.role);
     const reliable = Boolean(role && (dist[role].dmg?.length ?? 0) >= MIN_ROLE_ROWS);
     const group = dist[reliable ? role : 'unknown'];
     const parts = [];

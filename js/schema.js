@@ -3,6 +3,7 @@ import { JOBS } from './jobs.js';
 
 export const SCHEMA_VERSION = 1;
 export const TEAMS = ['astra', 'umbra'];
+const ROLE_GROUPS = ['tank', 'healer', 'dps'];
 const RESULTS = ['win', 'lose'];
 const PLAYER_NUMBERS = ['k', 'd', 'a', 'dmg', 'taken', 'heal'];
 
@@ -66,6 +67,8 @@ export function normalizeMatch(raw) {
       world: typeof p.world === 'string' ? p.world : '',
       tier: typeof p.tier === 'string' ? p.tier : '',
       job: typeof p.job === 'string' && p.job !== '' ? p.job.toUpperCase() : null,
+      // ジョブが分からなくても、アイコンの色からロールだけは分かることがある
+      role: ROLE_GROUPS.includes(p.role) ? p.role : null,
       k: p.k,
       d: p.d,
       a: p.a,

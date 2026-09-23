@@ -37,6 +37,7 @@ internal sealed class CaptureService(AppSettings settings)
             words = await WindowsOcr.RecognizeAsync(image);
             words = await RereadSmallNumbersAsync(image, words);
             words = RereadLatinAsync(image, words);
+            words = RereadTeamTotals(image, words);
         }
         catch (Exception e)
         {
@@ -127,6 +128,44 @@ internal sealed class CaptureService(AppSettings settings)
             if (reread.Count > 0) merged = ResultParser.ReplaceArea(merged, cell, reread);
         }
         return merged;
+    }
+
+    /// <summary>「K:8 D:0 A:26」の形に読めたものだけを採る。</summary>
+    private static readonly System.Text.RegularExpressions.Regex TotalsShape =
+        new(@"K[:;]?\d{1,3}\s*D[:;]?\d{1,3}\s*A[:;]?\d{1,3}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>「100.0%」の形に読めたものだけを採る。</summary>
+    private static readonly System.Text.RegularExpressions.Regex ProgressShape =
+        new(@"^\d{1,3}(\.\d)?%$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// チーム合計（K:8 D:0 A:26）の欄を、英語のモデルで読み直す。
+    /// 色つきの字が模様の上に乗っていて、日本語のモデルでは数字が「ロ」になってしまう。
+    /// 倍率によって読めたり読めなかったりするので、いくつか試して、
+    /// 「K:数字 D:数字 A:数字」の形になったものだけを採用する（形が崩れていれば使わない）。
+    /// </summary>
+    private static List<OcrWord> RereadTeamTotals(BitmapSource image, List<OcrWord> words)
+    {
+        if (!LatinOcr.Available) return words;
+        var merged = words;
+        foreach (var area in ResultParser.TeamTotalAreas(words))
+            merged = TryReread(image, merged, area, LatinOcr.TotalLetters, TotalsShape);
+        foreach (var area in ResultParser.ProgressAreas(words))
+            merged = TryReread(image, merged, area, LatinOcr.PercentLetters, ProgressShape);
+        return merged;
+    }
+
+    /// <summary>形が合うまで、倍率と前処理を変えて読み直す。どれも形にならなければ、元のままにする。</summary>
+    private static List<OcrWord> TryReread(BitmapSource image, List<OcrWord> words, PixelRect area,
+        string letters, System.Text.RegularExpressions.Regex shape)
+    {
+        foreach (var (zoom, byColour) in new[] { (3, false), (6, false), (4, false), (4, true), (6, true) })
+        {
+            var reread = LatinOcr.ReadLine(image, area, zoom, letters, byColour);
+            var text = string.Concat(reread.OrderBy(w => w.X).Select(w => w.Text));
+            if (shape.IsMatch(text)) return ResultParser.ReplaceArea(words, area, reread);
+        }
+        return words;
     }
 
     private static readonly JsonSerializerOptions DumpJson = new()

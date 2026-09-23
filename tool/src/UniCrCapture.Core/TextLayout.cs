@@ -121,6 +121,27 @@ public static class TextLayout
         return best;
     }
 
+    /// <summary>
+    /// 行の中から needle を「すべて」探す。
+    /// 左右のチーム欄は同じ高さに並ぶので、1行の中に同じ言葉が2つ出てくる（進行度 など）。
+    /// </summary>
+    public static IEnumerable<TextHit> FindAll(VisualLine line, string needle)
+    {
+        var target = Normalize(needle);
+        var glyphs = line.Glyphs;
+        var allowed = target.Length >= 4 ? 1 : 0;
+        for (var i = 0; i + target.Length <= glyphs.Count; i++)
+        {
+            var miss = 0;
+            for (var j = 0; j < target.Length && miss <= allowed; j++)
+                if (glyphs[i + j].C != target[j]) miss++;
+            if (miss > allowed) continue;
+            var run = glyphs.Skip(i).Take(target.Length).ToList();
+            yield return new TextHit(run[0].X, run.Min(g => g.Y), run[^1].Right, run.Max(g => g.Y + g.H));
+            i += target.Length - 1;
+        }
+    }
+
     public static (VisualLine Line, TextHit Hit)? FindInLines(IEnumerable<VisualLine> lines, string needle)
     {
         foreach (var line in lines)

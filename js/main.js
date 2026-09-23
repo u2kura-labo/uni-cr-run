@@ -298,9 +298,9 @@ function renderKpis(matches) {
 }
 
 // ジョブ名に役割の色の印を付ける
-function jobChip(code) {
-  const role = roleGroup(code);
-  return h('span', { class: role ? `job ${role}` : 'job' }, jobName(code));
+function jobChip(code, recorded = null) {
+  const role = roleGroup(code, recorded);
+  return h('span', { class: role ? `job ${role}` : 'job' }, jobName(code, recorded));
 }
 
 function avgScore(matches) {
@@ -572,7 +572,7 @@ function scoreboard(m) {
           h('tbody', {}, m.players.filter((p) => p.team === t).map((p) => {
             const sc = scored.get(p);
             return h('tr', { class: p.self ? 'self' : '' },
-              h('td', {}, jobChip(p.job)),
+              h("td", {}, jobChip(p.job, p.role)),
               h('td', {}, playerButton(p), p.self ? h('span', { class: 'you' }, '自分') : null),
               h('td', {}, p.world),
               h('td', {}, p.tier),
@@ -702,7 +702,7 @@ function openPlayer(key) {
         h('td', {}, f.dateTime(g.match.time)),
         h('td', {}, relationText(g)),
         h('td', {}, resultBadge(g.match.result)),
-        h('td', {}, jobChip(g.player.job)),
+        h("td", {}, jobChip(g.player.job, g.player.role)),
         h('td', {}, g.match.map ?? '不明'),
         h('td', { class: 'num' }, `${g.player.k} / ${g.player.d} / ${g.player.a}`),
         h('td', { class: 'num' }, f.big(g.player.dmg)),
