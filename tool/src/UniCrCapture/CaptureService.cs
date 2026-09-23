@@ -26,6 +26,7 @@ internal sealed class CaptureService(AppSettings settings)
         {
             words = await WindowsOcr.RecognizeAsync(image);
             words = await RereadSmallNumbersAsync(image, words);
+            words = RereadLatinAsync(image, words);
         }
         catch (Exception e)
         {
@@ -86,6 +87,23 @@ internal sealed class CaptureService(AppSettings settings)
         var before = words.Count(area.Value.Holds);
         var after = reread.Count(area.Value.Holds);
         return after < before ? words : ResultParser.ReplaceArea(words, area.Value, reread);
+    }
+
+    /// <summary>
+    /// 名前とワールド名のマスを、英語のモデルで読み直す。
+    /// 日本語のモデルはラテン文字を日本語として読むため（r → 「、l → I）、
+    /// あとから直そうとしても限界がある。英語のモデルなら、その種の読み違いが起きない。
+    /// </summary>
+    private static List<OcrWord> RereadLatinAsync(BitmapSource image, List<OcrWord> words)
+    {
+        if (!LatinOcr.Available) return words;
+        var merged = words;
+        foreach (var cell in ResultParser.LatinCells(words))
+        {
+            var reread = LatinOcr.ReadLine(image, cell);
+            if (reread.Count > 0) merged = ResultParser.ReplaceArea(merged, cell, reread);
+        }
+        return merged;
     }
 
     private static readonly JsonSerializerOptions DumpJson = new()

@@ -77,6 +77,13 @@ public partial class SettingsWindow : Window
         DialogResult = true;
     }
 
+    private void OnOpenFolder(object sender, RoutedEventArgs e)
+    {
+        var folder = string.IsNullOrWhiteSpace(SaveFolder.Text) ? AppSettings.DefaultSaveFolder : SaveFolder.Text.Trim();
+        Directory.CreateDirectory(folder);
+        Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+    }
+
     private void OnOpenViewer(object sender, RoutedEventArgs e) =>
         Process.Start(new ProcessStartInfo(OverlayWindow.ViewerUrl) { UseShellExecute = true });
 

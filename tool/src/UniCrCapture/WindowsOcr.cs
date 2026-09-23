@@ -51,7 +51,7 @@ internal static class WindowsOcr
         // 拡大しすぎて OCR の上限を超えないようにする（MaxImageDimension は uint）
         var limit = (int)Math.Max(1, (double)OcrEngine.MaxImageDimension / Math.Max(w, h));
         var n = Math.Clamp(zoom, 1, limit);
-        var words = await ReadBgraAsync(Enlarge(ScreenCapture.ToBgra(crop), n));
+        var words = await ReadBgraAsync(ScreenCapture.Enlarge(ScreenCapture.ToBgra(crop), n));
         return words
             .Select(t => t with { X = t.X / n + x, Y = t.Y / n + y, Width = t.Width / n, Height = t.Height / n })
             .ToList();
@@ -82,28 +82,4 @@ internal static class WindowsOcr
         return words;
     }
 
-    /// <summary>ドットをそのまま n 倍に並べる（色を混ぜない）。</summary>
-    private static BgraImage Enlarge(BgraImage src, int n)
-    {
-        if (n <= 1) return src;
-        var w = src.Width * n;
-        var pixels = new byte[w * src.Height * n * 4];
-        for (var sy = 0; sy < src.Height; sy++)
-        for (var sx = 0; sx < src.Width; sx++)
-        {
-            var i = (sy * src.Width + sx) * 4;
-            for (var dy = 0; dy < n; dy++)
-            {
-                var o = ((sy * n + dy) * w + sx * n) * 4;
-                for (var dx = 0; dx < n; dx++, o += 4)
-                {
-                    pixels[o] = src.Pixels[i];
-                    pixels[o + 1] = src.Pixels[i + 1];
-                    pixels[o + 2] = src.Pixels[i + 2];
-                    pixels[o + 3] = src.Pixels[i + 3];
-                }
-            }
-        }
-        return new BgraImage(pixels, w, src.Height * n);
-    }
 }

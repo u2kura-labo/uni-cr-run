@@ -86,6 +86,45 @@ internal static class ScreenCapture
         encoder.Save(stream);
     }
 
+    /// <summary>
+    /// ドットをそのまま n 倍に並べる（色を混ぜない）。
+    /// にじませる拡大だと細い文字の線がぼけて、1桁の数字や短い名前が丸ごと読み落とされる。
+    /// </summary>
+    public static BgraImage Enlarge(BgraImage src, int n)
+    {
+        if (n <= 1) return src;
+        var w = src.Width * n;
+        var pixels = new byte[w * src.Height * n * 4];
+        for (var sy = 0; sy < src.Height; sy++)
+        for (var sx = 0; sx < src.Width; sx++)
+        {
+            var i = (sy * src.Width + sx) * 4;
+            for (var dy = 0; dy < n; dy++)
+            {
+                var o = ((sy * n + dy) * w + sx * n) * 4;
+                for (var dx = 0; dx < n; dx++, o += 4)
+                {
+                    pixels[o] = src.Pixels[i];
+                    pixels[o + 1] = src.Pixels[i + 1];
+                    pixels[o + 2] = src.Pixels[i + 2];
+                    pixels[o + 3] = src.Pixels[i + 3];
+                }
+            }
+        }
+        return new BgraImage(pixels, w, src.Height * n);
+    }
+
+    /// <summary>PNG のバイト列にする（Tesseract に渡すのに使う）。</summary>
+    public static byte[] ToPng(BgraImage src)
+    {
+        var bitmap = BitmapSource.Create(src.Width, src.Height, 96, 96, PixelFormats.Bgra32, null, src.Pixels, src.Width * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
+
     /// <summary>BGRA の画素の並びにする（OCR と色の判定に使う）。</summary>
     public static BgraImage ToBgra(BitmapSource image)
     {

@@ -5,3 +5,4 @@ bin/
 obj/
 tool/publish/
 *.user
+tool/publish-test/

@@ -197,6 +197,52 @@ public static partial class ResultParser
         return new PixelRect(left, top, right - left, bottom - top);
     }
 
+    /// <summary>
+    /// 名前とワールド名のマスを、行ごとに返す（表が見つからなければ空）。
+    /// この2列はラテン文字なので、日本語のモデルではなく英語のモデルで読み直すため。
+    /// 1マス = 1行として読ませるので、行ごとに分けて返す。
+    /// </summary>
+    public static IReadOnlyList<PixelRect> LatinCells(IReadOnlyList<OcrWord> words)
+    {
+        var cells = new List<PixelRect>();
+        var lines = TextLayout.GroupLines(words);
+        var header = FindHeader(lines);
+        if (header is null) return cells;
+        var (headerLine, centers) = header.Value;
+        var rowHeight = headerLine.Words.Average(w => w.Height);
+        var bounds = ColumnBounds(centers);
+        var rows = ReadRows(lines, headerLine.Bottom, rowHeight, bounds);
+        if (rows.Count == 0) return cells;
+
+        // 行の高さは、行と行の間隔から見当づける（文字が読めていない行でも同じ高さで切り出せるように）
+        var spacing = rows.Count > 1
+            ? rows.Zip(rows.Skip(1), (a, b) => b.Top - a.Top).OrderBy(g => g).ElementAt(rows.Count / 2)
+            : rowHeight * 2;
+        var height = Math.Max(rowHeight * 1.6, spacing * 0.9);
+
+        foreach (var col in new[] { Col.Name, Col.World })
+        {
+            var (left, right) = bounds[col];
+            // 列の端は、実際に読めている文字の位置で詰める。
+            // 名前の左はジョブのアイコン、ワールドの右は階級（日本語）で、
+            // どちらも入れると英語のモデルが無理に文字として読んでしまう。
+            var texts = rows.SelectMany(r => r.Cells[col]).ToList();
+            if (texts.Count > 0) left = Math.Max(left, texts.Min(w => w.X) - rowHeight * 0.3);
+            if (col == Col.World)
+            {
+                var tierLeft = rows.SelectMany(r => r.Cells[Col.Tier]).Select(w => w.X).DefaultIfEmpty(double.MaxValue).Min();
+                right = Math.Min(right, tierLeft - 1);
+            }
+            if (right - left < rowHeight) continue;
+            foreach (var row in rows)
+            {
+                var top = (row.Top + row.Bottom) / 2 - height / 2;
+                cells.Add(new PixelRect(left, top, right - left, height));
+            }
+        }
+        return cells;
+    }
+
     /// <summary>area の中の語を、読み直した語で置き換える。</summary>
     public static List<OcrWord> ReplaceArea(IReadOnlyList<OcrWord> words, PixelRect area, IEnumerable<OcrWord> reread)
     {

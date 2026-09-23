@@ -26,6 +26,8 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Tesseract のネイティブ DLL（x64\）と英語モデルも exe の中に入れて、起動時に展開する -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
   </PropertyGroup>
@@ -34,6 +36,14 @@
     <!-- WPF では System.IO が暗黙の using から外れる（Shapes.Path と名前がぶつかるため）ので、明示する -->
     <Using Include="System.IO" />
     <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 名前とワールド名はラテン文字なので、英語のモデルで読む。
+         Windows の日本語 OCR だと r が「 になるなど、原理的に直しきれない。
+         モデルを同梱するので、使う人は何もインストールしなくてよい。 -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <None Include="tessdata\eng.traineddata" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
