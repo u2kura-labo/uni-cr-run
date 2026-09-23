@@ -435,8 +435,8 @@ table.data tr.self td { background: var(--self-row); }
 .matches .match-row.win { --result-color: var(--good); }
 .matches .match-row.lose { --result-color: var(--critical); }
 .matches .match-row:hover td, tr.clickable:hover td { background: var(--surface-2); }
-.matches .match-row.open td { background: var(--surface-2); border-bottom-color: transparent; }
-.matches tr.detail > td { background: var(--surface-2); padding: 4px 16px 20px; white-space: normal; }
+/* ポップアップから「試合一覧で見る」で来たときの目印 */
+.matches .match-row.open td { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
 tr.clickable { cursor: pointer; }
 
 /* ---------- 小さな印 ---------- */

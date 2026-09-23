@@ -114,9 +114,13 @@ internal sealed class CaptureService(AppSettings settings)
         return after < before ? words : ResultParser.ReplaceArea(words, area.Value, reread);
     }
 
-    /// <summary>1〜2 桁の数字だけに読めたものを採る。</summary>
+    /// <summary>
+    /// 1 桁、または 10〜19 に読めたものだけを採る。
+    /// 5 分の試合でキル・デス・アシストが 20 を超えることはないので、
+    /// 20 や 30 や 47 と読めたら、ありもしない桁が増えている（実際に起きた）。
+    /// </summary>
     private static readonly System.Text.RegularExpressions.Regex DigitShape =
-        new(@"^\d{1,2}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^(\d|1\d)$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// K / D / A のうち、何も読めていないマスを、1つずつ英語のモデルで読み直す。
@@ -130,7 +134,7 @@ internal sealed class CaptureService(AppSettings settings)
         var merged = words;
         foreach (var cell in ResultParser.NumberCells(words))
         {
-            if (merged.Any(cell.Holds)) continue;
+            if (!NeedsReread(merged, cell)) continue;
             var reread = ReadDigits(image, cell);
             if (reread is not null) merged = ResultParser.ReplaceArea(merged, cell, reread);
         }
@@ -138,8 +142,26 @@ internal sealed class CaptureService(AppSettings settings)
     }
 
     /// <summary>
-    /// 数字 1 マスを、倍率と読ませ方を変えながら読む。形にならなければ null。
-    /// 1 文字として読ませる（SingleChar）のは最後にする。2 桁の数字が 1 桁に見えてしまうため。
+    /// そのマスを読み直すかどうか。何も読めていないか、ありえない数（20 以上）のとき。
+    /// 20 以上は 5 分の試合では出ない（4 が 47 と読まれた例がある）ので、読み直したほうがよい。
+    /// ちゃんと読めているマスには触らない。読み直しを優先させると、正しく読めていた
+    /// 1 桁の 7 が 47 になるなど、かえって壊すことがあった。
+    /// </summary>
+    private static bool NeedsReread(List<OcrWord> words, PixelRect cell)
+    {
+        var had = new string(words.Where(cell.Holds).OrderBy(w => w.X)
+            .SelectMany(w => w.Text).Where(char.IsDigit).ToArray());
+        if (had.Length == 0) return true;
+        return int.TryParse(had, out var n) && n >= 20;
+    }
+
+    /// <summary>
+    /// 数字 1 マスを、倍率と読ませ方を変えて 5 回読み、いちばん多かった答えを採る。
+    /// どれも数字の形にならなければ null。
+    ///
+    /// 1 回目で決めてはいけない。倍率によっては、ありもしない桁が増える
+    /// （2 が 20、4 が 47 になる）。5 回のうち多いほうを採れば、この種のはずれが消える。
+    /// 同じ回数なら、先に出たほう（倍率の小さいほう）を採る。
     /// </summary>
     private static List<OcrWord>? ReadDigits(BitmapSource image, PixelRect cell)
     {
@@ -151,13 +173,16 @@ internal sealed class CaptureService(AppSettings settings)
             (6, true, Tesseract.PageSegMode.SingleWord),
             (6, false, Tesseract.PageSegMode.SingleChar),
         };
+        var votes = new List<(string Text, List<OcrWord> Words)>();
         foreach (var (zoom, byColour, mode) in tries)
         {
             var reread = LatinOcr.ReadLine(image, cell, zoom, LatinOcr.DigitLetters, byColour, mode);
             var text = string.Concat(reread.OrderBy(w => w.X).Select(w => w.Text));
-            if (DigitShape.IsMatch(text)) return reread;
+            if (DigitShape.IsMatch(text)) votes.Add((text, reread));
         }
-        return null;
+        if (votes.Count == 0) return null;
+        var best = votes.GroupBy(v => v.Text).OrderByDescending(g => g.Count()).First().First();
+        return best.Words;
     }
 
     /// <summary>

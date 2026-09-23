@@ -438,17 +438,15 @@ function renderMatchList(matches) {
   const shown = matches.slice(0, state.listLimit);
   const body = h('tbody');
   for (const m of shown) {
-    const open = state.openMatch === m.id;
-    const toggle = () => {
-      state.openMatch = open ? null : m.id;
-      renderMatchList(matches);
-    };
+    // 行を押したら、いまの画面の上にポップアップで出す（表の中で開くと、位置が動いて見失う）
+    const marked = state.openMatch === m.id;
+    const open = () => showMatch(m.id);
     body.append(h('tr', {
-      class: `match-row ${m.result}${open ? ' open' : ''}`,
+      class: `match-row ${m.result}${marked ? ' open' : ''}`,
       tabindex: 0,
-      'aria-expanded': String(open),
-      onclick: toggle,
-      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } },
+      role: 'button',
+      onclick: open,
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } },
     },
       h('td', {}, f.dateTime(m.time)),
       h('td', {}, resultBadge(m.result)),
@@ -460,7 +458,6 @@ function renderMatchList(matches) {
       h('td', { class: 'num' }, f.clock(m.self.crystal)),
       h('td', {}, m.warnings.length ? h('span', { class: 'warn', title: m.warnings.join('\n') }, '要確認') : ''),
     ));
-    if (open) body.append(h('tr', { class: 'detail' }, h('td', { colspan: 9 }, scoreboard(m))));
   }
 
   const table = h('table', { class: 'data matches' },
@@ -760,7 +757,7 @@ function showMatch(id) {
         h('p', { class: 'muted' }, [m.map ?? 'マップ不明', jobName(m.self.job, m.self.role)].join('・')),
       ),
       h('div', { class: 'dialog-actions' },
-        h('button', { type: 'button', onclick: () => openInList(id) }, '試合一覧で開く'),
+        h('button', { type: 'button', onclick: () => openInList(id) }, '試合一覧で見る'),
         h('button', { type: 'button', class: 'icon', 'aria-label': '閉じる', onclick: () => dlg.close() }, '×'),
       ),
     ),
@@ -769,7 +766,7 @@ function showMatch(id) {
   raise(dlg);
 }
 
-// 試合一覧のタブに移って、その試合を開く
+// 試合一覧のタブに移って、その試合の行まで動かす（行は押すとまたポップアップで開く）
 function openInList(id) {
   $('#match-dialog').close();
   $('#player-dialog').close();

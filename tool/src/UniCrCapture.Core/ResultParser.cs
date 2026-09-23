@@ -89,6 +89,10 @@ public static partial class ResultParser
                 var signature = JobIcons.Signature(pixels, icon.Value);
                 if (signature is not null) p.Job = JobIcons.Match(signature, options.JobIcons);
             }
+            // 5 分の試合でキル・デス・アシストが 20 を超えることはない。
+            // 読み直しても直らなかった分は、そのままにして知らせる（勝手に書き換えない）。
+            foreach (var (label, n) in new[] { ("K", p.K), ("D", p.D), ("A", p.A) })
+                if (n >= 20) result.Warnings.Add($"{p.Name} の {label} が {n} でした。読み違えている可能性が高いです。");
             icons.Add(icon);
             players.Add(p);
             rowBands.Add((row.Top, row.Bottom));
