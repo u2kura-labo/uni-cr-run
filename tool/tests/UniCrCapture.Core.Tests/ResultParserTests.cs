@@ -262,15 +262,17 @@ public class ResultParserTests
     }
 
     [Fact]
-    public void WarnsWhenTeamTotalsDoNotAddUp()
+    public void TeamTotalsComeFromThePlayerRows()
     {
+        // 画面の合計欄は読まない。表の数字のほうが確かなので、そちらを足す。
         var players = FakeScreen.RealMatch();
-        players[0] = players[0] with { K = 7 }; // 読み違えた想定
+        players[0] = players[0] with { K = 7 };
         var r = Parse(FakeScreen.Build(players));
 
         Assert.True(r.Success);
-        Assert.Contains(r.Warnings, w => w.Contains("astra の K 合計が合いません"));
-        Assert.Contains(r.Match!.Warnings!, w => w.Contains("astra の K 合計が合いません"));
+        var astra = r.Match!.Players.Where(p => p.Team == "astra").ToList();
+        Assert.Equal(astra.Sum(p => p.K), r.Match.Teams["astra"].K);
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("合計が合いません"));
     }
 
     [Fact]

@@ -36,6 +36,7 @@ internal sealed class CaptureService(AppSettings settings)
         {
             words = await WindowsOcr.RecognizeAsync(image);
             words = await RereadSmallNumbersAsync(image, words);
+            words = RereadNumberCells(image, words);
             words = RereadLatinAsync(image, words);
             words = RereadTeamTotals(image, words);
         }
@@ -111,6 +112,52 @@ internal sealed class CaptureService(AppSettings settings)
         var before = words.Count(area.Value.Holds);
         var after = reread.Count(area.Value.Holds);
         return after < before ? words : ResultParser.ReplaceArea(words, area.Value, reread);
+    }
+
+    /// <summary>1〜2 桁の数字だけに読めたものを採る。</summary>
+    private static readonly System.Text.RegularExpressions.Regex DigitShape =
+        new(@"^\d{1,2}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// K / D / A のうち、何も読めていないマスを、1つずつ英語のモデルで読み直す。
+    ///
+    /// 読めているマスには触らない。読み直したほうを優先すると、正しく読めていた 1 桁の「7」が
+    /// 「47」になるなど、かえって壊すことがあった（手元の画像で実際に起きた）。
+    /// </summary>
+    private static List<OcrWord> RereadNumberCells(BitmapSource image, List<OcrWord> words)
+    {
+        if (!LatinOcr.Available) return words;
+        var merged = words;
+        foreach (var cell in ResultParser.NumberCells(words))
+        {
+            if (merged.Any(cell.Holds)) continue;
+            var reread = ReadDigits(image, cell);
+            if (reread is not null) merged = ResultParser.ReplaceArea(merged, cell, reread);
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// 数字 1 マスを、倍率と読ませ方を変えながら読む。形にならなければ null。
+    /// 1 文字として読ませる（SingleChar）のは最後にする。2 桁の数字が 1 桁に見えてしまうため。
+    /// </summary>
+    private static List<OcrWord>? ReadDigits(BitmapSource image, PixelRect cell)
+    {
+        var tries = new (int Zoom, bool ByColour, Tesseract.PageSegMode Mode)[]
+        {
+            (4, false, Tesseract.PageSegMode.SingleWord),
+            (6, false, Tesseract.PageSegMode.SingleWord),
+            (8, false, Tesseract.PageSegMode.SingleWord),
+            (6, true, Tesseract.PageSegMode.SingleWord),
+            (6, false, Tesseract.PageSegMode.SingleChar),
+        };
+        foreach (var (zoom, byColour, mode) in tries)
+        {
+            var reread = LatinOcr.ReadLine(image, cell, zoom, LatinOcr.DigitLetters, byColour, mode);
+            var text = string.Concat(reread.OrderBy(w => w.X).Select(w => w.Text));
+            if (DigitShape.IsMatch(text)) return reread;
+        }
+        return null;
     }
 
     /// <summary>

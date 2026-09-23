@@ -13,7 +13,7 @@ namespace UniCrCapture.Core;
 /// 2. 見出しより下の語を行ごとにまとめ、列の位置で各マスに振り分ける
 /// 3. 見出しより上から、チームの勝敗・進行度・K/D/A 合計、ランク、経過時間を読む
 /// 4. 名前の文字の色でチーム（どちらの色がどちらの隊かは、チーム欄の下地の色から合わせる）、設定の名前か行のハイライトで自分の行を決める
-/// 5. 各プレイヤーの K/D/A の合計とチーム合計を照らし合わせて、読み違いを警告する
+/// 5. チーム合計は、各プレイヤーの K/D/A を足して出す（画面の合計欄は読み違えやすいので使わない）
 /// </summary>
 public static partial class ResultParser
 {
@@ -117,12 +117,15 @@ public static partial class ResultParser
         players[selfIndex].Self = true;
         if (!string.IsNullOrWhiteSpace(options.SelfJob)) players[selfIndex].Job = options.SelfJob;
 
-        // チームの情報が読めなかった部分を、プレイヤーから補う
+        // K/D/A の合計は、必ず表の数字を足して出す。
+        //
+        // 画面の合計欄（K:11 D:9 A:29）にも同じ数字が出ているが、模様の上に色つきの小さな字が
+        // 乗っていて、表の中の数字より読み違えやすい。手元の 19 枚では、A:29 が 293、A:21 が 211、
+        // K:14 D:11 A:41 が K:140:4A:46 と読めた。読めたほうを採ると正しい表の数字を壊すので、
+        // 記録にも、照らし合わせにも使わない（食い違いのほとんどが合計欄側の読み違いで、ただの誤報になった）。
         foreach (var t in new[] { "astra", "umbra" })
         {
             if (!teams.TryGetValue(t, out var team)) teams[t] = team = new TeamRecord();
-            if (totalsRead.Contains(t)) continue;
-            // 合計の欄が読めなくても、各プレイヤーを足せば同じ数になる。わざわざ知らせない
             var members = players.Where(p => p.Team == t).ToList();
             team.K = members.Sum(p => p.K);
             team.D = members.Sum(p => p.D);
@@ -136,19 +139,6 @@ public static partial class ResultParser
         }
         FillResults(teams, result);
         if (result.Errors.Count > 0) return result;
-
-        // ---------- 5. 答え合わせ ----------
-        foreach (var t in new[] { "astra", "umbra" })
-        {
-            var members = players.Where(p => p.Team == t).ToList();
-            void Check(string label, int sum, int total)
-            {
-                if (sum != total) result.Warnings.Add($"{t} の {label} 合計が合いません（個人の合計 {sum} / チーム {total}）");
-            }
-            Check("K", members.Sum(p => p.K), teams[t].K);
-            Check("D", members.Sum(p => p.D), teams[t].D);
-            Check("A", members.Sum(p => p.A), teams[t].A);
-        }
 
         // マップはリザルト画面に出ないが、1 時間ごとに決まった順で変わるので、
         // 試合が始まった時刻（撮った時刻 − 経過時間）から決める。メニューで選んであればそちらを使う。
@@ -222,6 +212,50 @@ public static partial class ResultParser
             if (spacing > 0) bottom = Math.Max(bottom, rows[0].Top + spacing * 9 + rowHeight * 2);
         }
         return new PixelRect(left, top, right - left, bottom - top);
+    }
+
+    /// <summary>
+    /// K / D / A のマスを、行ごと・列ごとに返す（表が見つからなければ空）。
+    ///
+    /// この3列は 1〜2 桁の小さな数字で、日本語のモデルでは丸ごと落ちることがある。
+    /// 落ちたマスは 0 として記録され、平均も合計も静かに狂うので、
+    /// 帯ごと拡大して読み直してもなお残るマスを、1つずつ英語のモデルで読み直すため。
+    /// 手元の 19 枚では、570 マスのうち 52 マスが落ちていた。
+    /// </summary>
+    public static IReadOnlyList<PixelRect> NumberCells(IReadOnlyList<OcrWord> words)
+    {
+        var cells = new List<PixelRect>();
+        var lines = TextLayout.GroupLines(words);
+        var header = FindHeader(lines);
+        if (header is null) return cells;
+        var (headerLine, centers) = header.Value;
+        var rowHeight = headerLine.Words.Average(w => w.Height);
+        var bounds = ColumnBounds(centers);
+        var rows = ReadRows(lines, headerLine.Bottom, rowHeight, bounds);
+        if (rows.Count == 0) return cells;
+
+        var spacing = rows.Count > 1
+            ? rows.Zip(rows.Skip(1), (a, b) => b.Top - a.Top).OrderBy(g => g).ElementAt(rows.Count / 2)
+            : rowHeight * 2;
+        var height = Math.Max(rowHeight * 1.6, spacing * 0.9);
+
+        foreach (var col in new[] { Col.K, Col.D, Col.A })
+        {
+            var (left, right) = bounds[col];
+            // 見出しの K / D / A は 1 文字で読めないことが多く、列の位置は当て推量になる。
+            // 読めている数字があれば、その中心にマスを合わせる（隣の列の文字が入りにくくなる）。
+            var seen = rows.SelectMany(r => r.Cells[col]).OrderBy(w => w.CenterX).ToList();
+            if (seen.Count >= 2)
+            {
+                var center = seen[seen.Count / 2].CenterX;
+                var half = Math.Min(center - left, right - center);
+                if (half > rowHeight * 0.4) (left, right) = (center - half, center + half);
+            }
+            if (right - left < rowHeight * 0.5) continue;
+            foreach (var row in rows)
+                cells.Add(new PixelRect(left, (row.Top + row.Bottom) / 2 - height / 2, right - left, height));
+        }
+        return cells;
     }
 
     /// <summary>

@@ -28,6 +28,9 @@ internal static class LatinOcr
     /// <summary>進行度（100.0%）に出る文字だけ。</summary>
     public const string PercentLetters = "0123456789.% ";
 
+    /// <summary>K / D / A のマスに出る文字だけ（1〜2 桁の数字）。</summary>
+    public const string DigitLetters = "0123456789";
+
     public static bool Available => Engine is not null;
 
     private static TesseractEngine? Engine
@@ -55,7 +58,7 @@ internal static class LatinOcr
     /// 返す語の位置は、元の画像の座標に直してある。
     /// </summary>
     public static List<OcrWord> ReadLine(BitmapSource image, PixelRect area, int zoom = 4,
-        string letters = NameLetters, bool byColour = false)
+        string letters = NameLetters, bool byColour = false, PageSegMode mode = PageSegMode.SingleLine)
     {
         var words = new List<OcrWord>();
         var engine = Engine;
@@ -77,7 +80,7 @@ internal static class LatinOcr
             var big = ScreenCapture.Enlarge(bgra, zoom);
 
             using var pix = Pix.LoadFromMemory(ScreenCapture.ToPng(big));
-            using var page = engine.Process(pix, PageSegMode.SingleLine);
+            using var page = engine.Process(pix, mode);
             using var it = page.GetIterator();
             it.Begin();
             do
