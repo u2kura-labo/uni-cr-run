@@ -508,6 +508,20 @@ tr.clickable { cursor: pointer; }
 .team-head .muted { font-size: 12px; }
 .team-key { display: none; }
 
+/* ---------- 顔ぶれからの見込み ---------- */
+.forecast {
+  margin: 4px 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface);
+  font-size: 13px;
+}
+.forecast.good { border-left-color: var(--good); }
+.forecast.bad { border-left-color: var(--critical); }
+.forecast.even,
+.forecast.expected { border-left-color: var(--border-strong); }
+
 /* ---------- プレイヤーのダイアログ ---------- */
 .dialog {
   width: min(960px, calc(100vw - 32px));
@@ -519,12 +533,31 @@ tr.clickable { cursor: pointer; }
   color: var(--text);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
 }
-.dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 .dialog-body { padding: 24px; }
-.dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+
+/* 見出しは上に貼り付けて、長い表を見ているあいだも「どの試合・誰か」と閉じるボタンが見えるように */
+.dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin: -24px -24px 16px;
+  padding: 20px 24px 14px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--page);
+  border-bottom: 1px solid var(--border);
+}
+.dialog-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
 .dialog h2 { font-size: 20px; }
 .dialog h3 { margin: 20px 0 6px; }
 .dialog button.icon { background: transparent; color: var(--text); border-color: var(--border-strong); }
+
+/* ダイアログの中の数字は、詰め込みすぎると読めないので広めに折り返す */
+.dialog .stats.small { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.dialog .stats.small .stat { padding: 14px 16px; }
 
 /* ---------- ドロップ ---------- */
 .drop-overlay {

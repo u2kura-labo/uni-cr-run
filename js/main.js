@@ -4,6 +4,7 @@ import { MatchIndex } from './dedupe.js';
 import {
   applyFilter, summary, groupBy, peerComparison,
   buildPlayerHistory, buildDistribution, scoreMatch, selfScore, playerKey, selfKey, byTier,
+  expectedWinRate, luckOf, luckBalance,
   PERF_WEIGHTS, PLAYER_WEIGHTS, ROLE_LABELS, WINRATE_PRIOR,
 } from './stats.js';
 import { lineChart, barChart, divergingChart, showTooltip, hideTooltip } from './charts.js';
@@ -289,11 +290,15 @@ function renderHero(matches) {
 function renderKpis(matches) {
   renderHero(matches);
   const sum = summary(matches);
+  const luck = luckBalance(matches, state.history);
   $('#kpis').replaceChildren(
     stat('平均 K / D / A', `${f.dec(sum.avg.k)} / ${f.dec(sum.avg.d)} / ${f.dec(sum.avg.a)}`),
     stat('平均 与ダメージ', f.big(sum.avg.dmg)),
     stat('平均 与ヒール', f.big(sum.avg.heal)),
     stat('平均 移送時間', f.clock(sum.avg.crystal)),
+    luck ? stat('顔ぶれとのくいちがい',
+      `${luck.diff >= 0 ? '+' : ''}${Math.round(luck.diff * 100)} pt`,
+      `実際 ${f.pct(luck.actual)} / 顔ぶれからの見込み ${f.pct(luck.predicted)}（${luck.n} 試合）`) : null,
   );
 }
 
@@ -543,6 +548,23 @@ function scoreReasonRows(sc) {
   ].filter(Boolean);
 }
 
+// 顔ぶれからの見込みと、実際の結果のくいちがい
+function forecastRow(m) {
+  const expected = expectedWinRate(m, state.history);
+  const luck = luckOf(expected, m.result);
+  if (luck.kind === 'unknown') return null;
+  return h('p', {
+    class: `forecast ${luck.kind}`,
+    title: '味方は「その人と組んだときの勝率」、敵は「その人が相手のときに勝てた率」を、'
+      + '会った回数で重みを付けて平均したものです。この試合自体は数に入れていません'
+      + '（入れると「勝った試合は勝てそうだった」と当たり前の答えになるため）。',
+  },
+    h('strong', {}, luck.label),
+    h('span', { class: 'muted' },
+      `　この顔ぶれでの見込み ${f.pct(expected.rate)}（普段 ${f.pct(expected.base)}）・${luck.note}`),
+  );
+}
+
 function scoreboard(m) {
   const meta = [
     m.duration != null ? `経過時間 ${f.clock(m.duration)}` : null,
@@ -551,6 +573,7 @@ function scoreboard(m) {
   const scored = new Map(scoreMatch(m, state.dist).map((x) => [x.player, x]));
   return h('div', { class: 'scoreboard' },
     meta ? h('p', { class: 'muted' }, meta) : null,
+    forecastRow(m),
     m.warnings.length ? h('ul', { class: 'warn-list' }, m.warnings.map((w) => h('li', {}, w))) : null,
     ...TEAMS.map((t) => {
       const team = m.teams[t];
@@ -600,15 +623,17 @@ function relationText(g) {
   return g.relation === 'ally' ? '味方' : '敵';
 }
 
-// 並べ替え。少ない試合数の差は偶然が大きいので、差で並べるときは 3 試合以上の人を先にする
-const enough = (n) => (n >= 3 ? 1 : 0);
-const trusted = (p) => p.confidence.level;
+// 並べ替え。選んだ項目そのままの順にする。
+// 試合数が少ないときの偏りは、値を出すときに普段の勝率へ寄せて補正済みなので、
+// ここで「3 試合以上の人を先に」といった並べ替えはしない（選んだ順にならず分かりにくいため）。
+const desc = (get) => (a, b) => (get(b) ?? -Infinity) - (get(a) ?? -Infinity) || b.n - a.n;
+const asc = (get) => (a, b) => (get(a) ?? Infinity) - (get(b) ?? Infinity) || b.n - a.n;
 const PLAYER_SORTS = {
   n: { cmp: (a, b) => b.n - a.n || (b.score ?? 0) - (a.score ?? 0) },
-  allyBest: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (b.allyScore ?? -1) - (a.allyScore ?? -1) },
-  allyWorst: { cmp: (a, b) => enough(b.allyN) - enough(a.allyN) || (a.allyScore ?? 999) - (b.allyScore ?? 999) },
-  index: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (b.score ?? 0) - (a.score ?? 0) },
-  indexLow: { cmp: (a, b) => Math.min(trusted(b), 2) - Math.min(trusted(a), 2) || (a.score ?? 999) - (b.score ?? 999) },
+  allyBest: { cmp: desc((p) => p.allyScore) },
+  allyWorst: { cmp: asc((p) => p.allyScore) },
+  index: { cmp: desc((p) => p.score) },
+  indexLow: { cmp: asc((p) => p.score) },
 };
 
 
@@ -619,6 +644,8 @@ function indexExplanation() {
     h('p', {}, scoreRuleText()),
     h('p', {}, `プレイヤーのスコア：${weightText(PLAYER_WEIGHTS, PLAYER_LABELS)} を合わせたもの（0〜100）。実力はその人の試合のスコアの平均（ジョブが分かっている試合だけ）。味方・敵のどちらかになったことしかない人は、あるものだけで出します。`),
     h('p', {}, `勝率は、試合数が少ないうちは普段の勝率に寄せて補正します（${WINRATE_PRIOR} 試合分）。3 試合で 3 連勝しても大きな値にはならず、試合数が増えるほど実際の値に近づきます。会った回数が多いほど信頼できます（参考：3 回以下 / 中：4〜9 / 高：10 以上）。`),
+    h('p', {}, '並べ替えは、選んだ項目の補正後の値でそのまま並びます。表に出している % は補正前の実際の値なので、'
+      + '「100%（1 試合）」より「60%（10 試合）」が上に来ることがあります。'),
   );
 }
 
@@ -710,13 +737,41 @@ function openPlayer(key) {
         h('td', { class: 'num' }, scoreCell(g.score, g.reliable, g.detail)),
       ))),
     )),
-    h('p', { class: 'muted note' }, '行をクリックすると、試合一覧でその試合を開きます。'),
+    h('p', { class: 'muted note' }, '行をクリックすると、その試合の内容をこの上に出します。'),
   );
-  if (!dlg.open) dlg.showModal();
+  raise(dlg);
 }
 
-// プレイヤー詳細から試合一覧の該当試合へ
+// 開いているものより上に出す（プレイヤー → 試合 → プレイヤー … と重ねられるように）
+function raise(dlg) {
+  if (dlg.open) dlg.close();
+  dlg.showModal();
+}
+
+// 試合の内容を、いまの画面の上にそのまま出す
 function showMatch(id) {
+  const m = state.matches.find((x) => x.id === id);
+  if (!m) return;
+  const dlg = $('#match-dialog');
+  dlg.querySelector('.dialog-body').replaceChildren(
+    h('div', { class: 'dialog-head' },
+      h('div', {},
+        h('h2', {}, `${f.dateTime(m.time)}　${RESULT_NAMES[m.result]}`),
+        h('p', { class: 'muted' }, [m.map ?? 'マップ不明', jobName(m.self.job, m.self.role)].join('・')),
+      ),
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', onclick: () => openInList(id) }, '試合一覧で開く'),
+        h('button', { type: 'button', class: 'icon', 'aria-label': '閉じる', onclick: () => dlg.close() }, '×'),
+      ),
+    ),
+    scoreboard(m),
+  );
+  raise(dlg);
+}
+
+// 試合一覧のタブに移って、その試合を開く
+function openInList(id) {
+  $('#match-dialog').close();
   $('#player-dialog').close();
   state.filter = { ...state.filter, days: 0, job: '' };
   state.openMatch = id;
@@ -862,9 +917,10 @@ function setupPlayers() {
     state.playerQuery = e.target.value;
     renderPlayers();
   });
-  const dlg = $('#player-dialog');
   // 背景をクリックしたら閉じる
-  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  for (const dlg of [$('#player-dialog'), $('#match-dialog')]) {
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  }
 }
 
 function setupResize() {

@@ -224,6 +224,8 @@ export function buildPlayerHistory(matches, dist) {
       n: h.games.length,
       allyN: ally.length,
       enemyN: enemy.length,
+      allyWins,
+      enemyLosses,
       myWinRate,
       allyWinRate: ally.length ? allyWins / ally.length : null,
       enemyLossRate: enemy.length ? enemyLosses / enemy.length : null,
@@ -240,6 +242,73 @@ export function buildPlayerHistory(matches, dist) {
     });
   }
   return history;
+}
+
+// ---------- 顔ぶれからの勝率の見込み ----------
+
+// この顔ぶれなら、どれくらい勝てそうだったか。
+//
+// 味方については「その人と組んだときの勝率」、敵については「その人が敵だったときに勝てた率」を、
+// 会った回数で重みを付けて平均する。回数が少ない人は、値を出す時点で普段の勝率に寄せてあるので、
+// 情報が無いほど「普段の勝率」に近づく。
+//
+// 大事なのは、その試合自体を数に入れないこと（勝った試合の味方は勝率が上がるので、
+// そのまま使うと「勝った試合は勝てそうだった」と当たり前の答えしか出ない）。
+export function expectedWinRate(m, history) {
+  let sum = 0;
+  let weight = 0;
+  let base = 0.5;
+  for (const p of m.players) {
+    if (p.self) continue;
+    const h = history.get(playerKey(p));
+    if (!h) continue;
+    base = h.myWinRate;
+    const ally = p.team === m.self.team;
+    // この試合ぶんを引く
+    const n = (ally ? h.allyN : h.enemyN) - 1;
+    if (n < 1) continue;
+    const hits = ally
+      ? h.allyWins - (m.result === 'win' ? 1 : 0)
+      : h.enemyLosses - (m.result === 'lose' ? 1 : 0);
+    const prior = ally ? h.myWinRate : 1 - h.myWinRate;
+    const rate = (hits + prior * WINRATE_PRIOR) / (n + WINRATE_PRIOR);
+    sum += (ally ? rate : 1 - rate) * n;
+    weight += n;
+  }
+  return { rate: weight ? sum / weight : base, base, known: weight };
+}
+
+// 見込みと実際のくいちがい。勝って当たり前だったのか、拾ったのか、取りこぼしたのか。
+export function luckOf(expected, result) {
+  const won = result === 'win';
+  const diff = (won ? 1 : 0) - expected.rate;
+  if (expected.known < 3) {
+    return { diff, label: '判定できません', note: '顔ぶれの情報がまだ足りません', kind: 'unknown' };
+  }
+  if (expected.rate >= 0.58) {
+    return won
+      ? { diff, label: '順当な勝ち', note: '勝ちやすい顔ぶれでした', kind: 'expected' }
+      : { diff, label: '取りこぼし', note: '勝ちやすい顔ぶれなのに負けました', kind: 'bad' };
+  }
+  if (expected.rate <= 0.42) {
+    return won
+      ? { diff, label: '拾った勝ち', note: '負けやすい顔ぶれでしたが勝ちました', kind: 'good' }
+      : { diff, label: '順当な負け', note: '負けやすい顔ぶれでした', kind: 'expected' };
+  }
+  return won
+    ? { diff, label: '五分の勝ち', note: 'どちらに転んでもおかしくない顔ぶれでした', kind: 'even' }
+    : { diff, label: '五分の負け', note: 'どちらに転んでもおかしくない顔ぶれでした', kind: 'even' };
+}
+
+// 全試合ぶんの「見込みと実際の差」。プラスなら顔ぶれの見込みより勝てている。
+export function luckBalance(matches, history) {
+  const rows = matches
+    .map((m) => ({ m, expected: expectedWinRate(m, history) }))
+    .filter((x) => x.expected.known >= 3);
+  if (!rows.length) return null;
+  const actual = rows.filter((x) => x.m.result === 'win').length / rows.length;
+  const predicted = mean(rows.map((x) => x.expected.rate));
+  return { n: rows.length, actual, predicted, diff: actual - predicted };
 }
 
 // 自分と「同じジョブの他のプレイヤー」の比較。
