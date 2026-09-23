@@ -11,6 +11,8 @@ internal sealed class AppSettings
     public string SaveFolder { get; set; } = DefaultSaveFolder;
     public string Hotkey { get; set; } = "Ctrl+Shift+F12";
     public bool KeepImages { get; set; } = true;
+    /// <summary>保存する前に、時刻から決めたマップでいいか確かめる。</summary>
+    public bool ConfirmMap { get; set; } = true;
     public double? ButtonLeft { get; set; }
     public double? ButtonTop { get; set; }
 

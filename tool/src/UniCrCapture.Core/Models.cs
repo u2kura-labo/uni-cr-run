@@ -36,6 +36,8 @@ public sealed class ParseOptions
     public string? Map { get; init; }
     public DateTimeOffset CapturedAt { get; init; } = DateTimeOffset.Now;
     public string? SourceFile { get; init; }
+    /// <summary>覚えているジョブのアイコン（ジョブの略称 → 明るさの並び）。空なら、ジョブは判定しない。</summary>
+    public IReadOnlyDictionary<string, double[]> JobIcons { get; init; } = new Dictionary<string, double[]>();
     public string AppName { get; init; } = "conflict-record-capture";
 }
 
@@ -45,6 +47,8 @@ public sealed class ParseResult
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
     public bool Success => Match is not null && Errors.Count == 0;
+    /// <summary>各プレイヤーのジョブのアイコンの位置（Players と同じ並び）。アイコンを覚えるのに使う。</summary>
+    public IReadOnlyList<PixelRect?> JobIconAreas { get; set; } = Array.Empty<PixelRect?>();
 }
 
 // ---------- JSONL の1行（ビューアの README「JSONL の形式（v1）」と同じ） ----------
@@ -85,6 +89,8 @@ public sealed class PlayerRecord
 {
     [JsonPropertyName("team")] public string Team { get; set; } = "";
     [JsonPropertyName("job")] public string? Job { get; set; }
+    /// <summary>tank / healer / dps。ジョブのアイコンの下地の色から分かる（絵柄からジョブそのものはまだ読めない）。</summary>
+    [JsonPropertyName("role")] public string? Role { get; set; }
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("world")] public string World { get; set; } = "";
     [JsonPropertyName("tier")] public string Tier { get; set; } = "";

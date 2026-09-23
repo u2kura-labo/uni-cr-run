@@ -10,11 +10,21 @@ internal sealed class CaptureService(AppSettings settings)
 {
     public sealed record Outcome(bool Ok, string Title, IReadOnlyList<string> Details);
 
-    /// <summary>次の1試合だけに使うマップ（リザルト画面に出ないのでメニューで選ぶ）。保存したら消す。</summary>
+    /// <summary>次の1試合だけに使うマップ（時刻から判定するが、メニューで上書きできる）。保存したら消す。</summary>
     public string? NextMap { get; set; }
 
+    /// <summary>覚えたジョブのアイコン。自分の行から少しずつ増える。</summary>
+    public JobIconStore JobIconStore => _jobIcons;
 
-    public async Task<Outcome> ProcessAsync(BitmapSource image, DateTimeOffset at, string? existingFile = null)
+    private readonly JobIconStore _jobIcons = JobIconStore.Load();
+
+
+    /// <param name="confirm">
+    /// 保存する前に呼ばれる。false を返すと保存しない。
+    /// マップは時刻から決めているので、目で確かめてもらうために使う（まとめて読み込むときは渡さない）。
+    /// </param>
+    public async Task<Outcome> ProcessAsync(BitmapSource image, DateTimeOffset at, string? existingFile = null,
+        Func<MatchRecord, IReadOnlyList<string>, bool>? confirm = null)
     {
         // 画像は先に保存しておく（読み取りを直したあとに、読み直せるように）
         var imageName = existingFile is null ? $"cap_{at:yyyyMMdd_HHmmss}.png" : Path.GetFileName(existingFile);
@@ -33,10 +43,12 @@ internal sealed class CaptureService(AppSettings settings)
             return new Outcome(false, "文字を読み取れませんでした", new[] { e.Message });
         }
 
-        var result = ResultParser.Parse(words, ScreenCapture.ToBgra(image), new ParseOptions
+        var pixels = ScreenCapture.ToBgra(image);
+        var result = ResultParser.Parse(words, pixels, new ParseOptions
         {
             SelfName = settings.SelfName,
             SelfJob = settings.SelfJob,
+            JobIcons = _jobIcons.Icons,
             Map = NextMap,
             CapturedAt = at,
             SourceFile = imageName,
@@ -52,6 +64,16 @@ internal sealed class CaptureService(AppSettings settings)
 
         var match = result.Match;
         var self = match.Players.First(p => p.Self);
+
+        // 自分の行はジョブが分かっているので、そのアイコンを覚える（次からは他の人の行でも見分けられる）
+        var selfAt = match.Players.IndexOf(self);
+        if (!string.IsNullOrWhiteSpace(settings.SelfJob) && selfAt < result.JobIconAreas.Count
+            && result.JobIconAreas[selfAt] is { } selfIcon)
+            _jobIcons.Remember(settings.SelfJob, JobIcons.Signature(pixels, selfIcon));
+
+        if (confirm is not null && !confirm(match, result.Warnings))
+            return new Outcome(true, "登録しませんでした", new[] { "「登録しない」が選ばれました。" });
+
         match.Owner = OwnerMark.For(match);
         var store = new JsonlStore(settings.MatchesFolder);
         var written = store.Append(match, at);
@@ -59,7 +81,8 @@ internal sealed class CaptureService(AppSettings settings)
         if (result.Warnings.Count > 0) WriteOcrDump(imagePath, words, result);
 
         var summary = $"{(match.Teams[self.Team].Result == "win" ? "勝ち" : "負け")}・{GameData.JobName(self.Job)}・" +
-                      $"{self.K}/{self.D}/{self.A}・与ダメ {self.Dmg:N0}";
+                      $"{self.K}/{self.D}/{self.A}・与ダメ {self.Dmg:N0}" +
+                      (string.IsNullOrEmpty(match.Map) ? "" : $"・{match.Map}");
         var details = new List<string> { summary };
         if (!written) details.Insert(0, "この試合はもう保存されていました。");
         details.AddRange(result.Warnings.Select(w => "要確認：" + w));

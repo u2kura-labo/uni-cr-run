@@ -71,6 +71,9 @@
     <TextBlock Foreground="{StaticResource Text2}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,14"
                Text="個人で使うためのツールです。他のプレイヤーの名前が入ったデータや、その画面のスクリーンショットを共有しないでください。作成したファイルには、あなたのキャラクター名が入ります。"/>
 
+    <CheckBox x:Name="ConfirmMap" Foreground="{StaticResource Text}" Margin="0,0,0,8"
+              Content="保存する前にマップを確かめる（マップは撮った時刻から判定しています）"/>
+
     <CheckBox x:Name="KeepImages" Foreground="{StaticResource Text}" Margin="0,0,0,18"
               Content="撮った画像も保存する（読み取りを直したあとに読み直せます）"/>
 

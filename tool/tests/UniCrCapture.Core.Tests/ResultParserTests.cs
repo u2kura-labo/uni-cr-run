@@ -348,6 +348,49 @@ public class ResultParserTests
     }
 }
 
+public class MapRotationTests
+{
+    /// <summary>
+    /// マップは 1 時間ごとに 7 つを順に回る。
+    /// 実際の画面で確認した並び（2026-09-23 10:00 日本時間が「ハルモニア戦争図書館」）を、
+    /// 前後 24 時間ぶんそのまま突き合わせる。
+    /// </summary>
+    [Fact]
+    public void FollowsTheHourlyRotation()
+    {
+        var jst = TimeSpan.FromHours(9);
+        var expected = new[]
+        {
+            (9, "東方絡繰御殿"), (10, "ハルモニア戦争図書館"), (11, "レッド・サンズ"), (12, "パライストラ"),
+            (13, "ヴォルカニック・ハート"), (14, "ベイサイド・バトルグラウンド"), (15, "クラウドナイン"),
+            (16, "東方絡繰御殿"), (17, "ハルモニア戦争図書館"), (18, "レッド・サンズ"), (19, "パライストラ"),
+            (20, "ヴォルカニック・ハート"), (21, "ベイサイド・バトルグラウンド"), (22, "クラウドナイン"),
+            (23, "東方絡繰御殿"),
+        };
+        foreach (var (hour, map) in expected)
+        {
+            var at = new DateTimeOffset(2026, 9, 23, hour, 30, 0, jst);
+            Assert.Equal(map, GameData.MapAt(at));
+        }
+
+        // 日付をまたいだ先も続く
+        Assert.Equal("ハルモニア戦争図書館", GameData.MapAt(new DateTimeOffset(2026, 9, 24, 0, 30, 0, jst)));
+        Assert.Equal("レッド・サンズ", GameData.MapAt(new DateTimeOffset(2026, 9, 24, 8, 30, 0, jst)));
+
+        // 時差のある場所でも、同じ瞬間なら同じマップ
+        Assert.Equal(GameData.MapAt(new DateTimeOffset(2026, 9, 23, 10, 30, 0, jst)),
+            GameData.MapAt(new DateTimeOffset(2026, 9, 23, 1, 30, 0, TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public void TellsHowFarIntoTheMapItIs()
+    {
+        var jst = TimeSpan.FromHours(9);
+        Assert.Equal(0, GameData.MinutesIntoMap(new DateTimeOffset(2026, 9, 23, 10, 0, 0, jst)), 3);
+        Assert.Equal(46, GameData.MinutesIntoMap(new DateTimeOffset(2026, 9, 23, 10, 46, 0, jst)), 3);
+    }
+}
+
 public class JsonlStoreTests
 {
     [Fact]

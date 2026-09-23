@@ -20,6 +20,7 @@ public partial class SettingsWindow : Window
         SaveFolder.Text = settings.SaveFolder;
         HotkeyText.Text = settings.Hotkey;
         KeepImages.IsChecked = settings.KeepImages;
+        ConfirmMap.IsChecked = settings.ConfirmMap;
         if (firstRun) Intro.Text = "はじめに自分のキャラクター名を入れてください。\n" + Intro.Text;
         if (_overlay is null) StatusBox.Visibility = Visibility.Collapsed;
         else ShowStatus();
@@ -74,6 +75,7 @@ public partial class SettingsWindow : Window
         _settings.SaveFolder = string.IsNullOrWhiteSpace(SaveFolder.Text) ? AppSettings.DefaultSaveFolder : SaveFolder.Text.Trim();
         _settings.Hotkey = HotkeyText.Text.Trim();
         _settings.KeepImages = KeepImages.IsChecked == true;
+        _settings.ConfirmMap = ConfirmMap.IsChecked == true;
         DialogResult = true;
     }
 

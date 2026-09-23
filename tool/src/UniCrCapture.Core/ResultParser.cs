@@ -69,16 +69,28 @@ public static partial class ResultParser
         var astraIsWarm = AstraIsWarm(pixels, FindLowest(above, "アストラ"), FindLowest(above, "アンブラ"));
 
         // ---------- 4. プレイヤー ----------
+        // ジョブのアイコンは、名前のすぐ左に並ぶ四角
+        var nameLeft = rows.SelectMany(r => r.Cells[Col.Name]).Select(w => w.X).DefaultIfEmpty(double.NaN).Min();
         var players = new List<PlayerRecord>();
         var rowBands = new List<(double Top, double Bottom)>();
+        var icons = new List<PixelRect?>();
         foreach (var row in rows)
         {
             var p = ToPlayer(row, result);
             if (p is null) continue;
             p.Team = DetectTeam(row.NameWords, pixels, astraIsWarm) ?? "";
+            var icon = double.IsNaN(nameLeft) ? null : IconArea(pixels, nameLeft, rowHeight, row.Top, row.Bottom);
+            if (icon is not null)
+            {
+                p.Role = DetectRole(pixels, icon.Value);
+                var signature = JobIcons.Signature(pixels, icon.Value);
+                if (signature is not null) p.Job = JobIcons.Match(signature, options.JobIcons);
+            }
+            icons.Add(icon);
             players.Add(p);
             rowBands.Add((row.Top, row.Bottom));
         }
+        result.JobIconAreas = icons;
         if (players.Any(p => p.Team == ""))
         {
             result.Errors.Add("名前の色からチームを判定できない行がありました。");
@@ -135,10 +147,22 @@ public static partial class ResultParser
             Check("A", members.Sum(p => p.A), teams[t].A);
         }
 
+        // マップはリザルト画面に出ないが、1 時間ごとに決まった順で変わるので、
+        // 試合が始まった時刻（撮った時刻 − 経過時間）から決める。メニューで選んであればそちらを使う。
+        var map = options.Map;
+        if (string.IsNullOrWhiteSpace(map))
+        {
+            var started = options.CapturedAt - Elapsed(duration);
+            map = GameData.MapAt(started);
+            // 撮るまでに間があるぶん、実際の開始はこれより前。切り替わり直後だと1つ前のマップかもしれない
+            if (GameData.MinutesIntoMap(started) < 3)
+                result.Warnings.Add($"マップは時刻から決めました（{map}）。切り替わった直後なので、1つ前のマップかもしれません。");
+        }
+
         var match = new MatchRecord
         {
             Ts = options.CapturedAt.ToString("yyyy-MM-ddTHH:mm:sszzz", CultureInfo.InvariantCulture),
-            Map = string.IsNullOrWhiteSpace(options.Map) ? null : options.Map,
+            Map = map,
             Duration = duration,
             Rank = rank,
             Teams = teams,
@@ -493,6 +517,16 @@ public static partial class ResultParser
         return bestScore <= 2 ? best : null;
     }
 
+    /// <summary>"1:43" のような経過時間を、長さに直す。</summary>
+    private static TimeSpan Elapsed(string? duration)
+    {
+        if (string.IsNullOrEmpty(duration)) return TimeSpan.Zero;
+        var m = ClockPattern().Match(duration);
+        return m.Success
+            ? new TimeSpan(0, int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture))
+            : TimeSpan.Zero;
+    }
+
     public static string? ParseClock(string raw)
     {
         var s = TextLayout.Normalize(raw).Replace('.', ':').Replace(';', ':').Replace(',', ':');
@@ -733,6 +767,68 @@ public static partial class ResultParser
             n++;
         }
         return n == 0 ? null : (double)sum / n;
+    }
+
+    /// <summary>
+    /// ジョブのアイコンの四角を探す。名前のすぐ左にあり、下地が暗い色で塗られている。
+    /// （表の下地や行のハイライトは明るいので、暗くて色のある画素の広がりを取れば見つかる）
+    /// </summary>
+    private static PixelRect? IconArea(IPixelSource? pixels, double nameLeft, double rowHeight, double top, double bottom)
+    {
+        if (pixels is null) return null;
+        var x0 = (int)Math.Max(0, nameLeft - rowHeight * 4);
+        var x1 = (int)Math.Min(pixels.Width - 1, nameLeft - 1);
+        var y0 = (int)Math.Max(0, top - rowHeight * 0.6);
+        var y1 = (int)Math.Min(pixels.Height - 1, bottom + rowHeight * 0.6);
+        int left = int.MaxValue, right = int.MinValue, up = int.MaxValue, down = int.MinValue;
+        for (var y = y0; y <= y1; y++)
+        for (var x = x0; x <= x1; x++)
+        {
+            var (r, g, b) = pixels.GetPixel(x, y);
+            var max = Math.Max(r, Math.Max(g, b));
+            var min = Math.Min(r, Math.Min(g, b));
+            if (max >= 140 || max - min < 8) continue;
+            left = Math.Min(left, x);
+            right = Math.Max(right, x);
+            up = Math.Min(up, y);
+            down = Math.Max(down, y);
+        }
+        if (right - left < rowHeight || down - up < rowHeight) return null;
+        return new PixelRect(left, up, right - left + 1, down - up + 1);
+    }
+
+    /// <summary>
+    /// ジョブのアイコンの下地の色で、ロール（tank / healer / dps）を見分ける。
+    /// 絵柄からジョブそのものは読めないが、下地の色はロールごとに決まっている
+    /// （DPS は赤 R80 G48 B47、ヒーラーは緑 R52 G73 B39、タンクは青）。
+    /// 暗くて色のある画素だけを見る。行のハイライトや表の下地は明るいので外れる。
+    /// </summary>
+    public static string? DetectRole(IPixelSource? pixels, PixelRect icon)
+    {
+        if (pixels is null) return null;
+        var x0 = (int)Math.Max(0, icon.X);
+        var x1 = (int)Math.Min(pixels.Width - 1, icon.Right);
+        var y0 = (int)Math.Max(0, icon.Y);
+        var y1 = (int)Math.Min(pixels.Height - 1, icon.Bottom);
+        var rs = new List<int>();
+        var gs = new List<int>();
+        var bs = new List<int>();
+        for (var y = y0; y <= y1; y++)
+        for (var x = x0; x <= x1; x++)
+        {
+            var (r, g, b) = pixels.GetPixel(x, y);
+            var max = Math.Max(r, Math.Max(g, b));
+            var min = Math.Min(r, Math.Min(g, b));
+            if (max >= 140 || max - min < 8) continue; // 明るい画素（ハイライト・下地）と、色のない画素は数えない
+            rs.Add(r);
+            gs.Add(g);
+            bs.Add(b);
+        }
+        if (rs.Count < 20) return null;
+        var (mr, mg, mb) = (Median(rs), Median(gs), Median(bs));
+        if (mg > mr && mg > mb) return "healer";
+        if (mb > mr && mb > mg) return "tank";
+        return "dps";
     }
 
     /// <summary>名前の文字の色で、どちらの隊かを判定する（どちらの色が赤寄りかは呼ぶ側が決める）。</summary>

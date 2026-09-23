@@ -1,3 +1,4 @@
+using UniCrCapture.Core;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -16,6 +17,13 @@ public partial class App : Application
         if (e.Args.Length >= 2 && e.Args[0] == "--import")
         {
             _ = ImportAsync(e.Args[1], e.Args.Contains("--quiet"));
+            return;
+        }
+
+        // 見た目を確かめるために、マップの確認の窓だけ出す（開発用）
+        if (e.Args.Contains("--mapdialog"))
+        {
+            new MapConfirmWindow(SampleMatch(), "マップは時刻から決めました（ヴォルカニック・ハート）。切り替わった直後なので、1つ前のマップかもしれません。").Show();
             return;
         }
 
@@ -81,6 +89,15 @@ public partial class App : Application
             Shutdown();
         }
     }
+
+    /// <summary>--mapdialog で見た目を確かめるための、作り物の1試合。</summary>
+    private static MatchRecord SampleMatch() => new()
+    {
+        Map = "ヴォルカニック・ハート",
+        Duration = "1:43",
+        Teams = new() { ["umbra"] = new TeamRecord { Result = "win" }, ["astra"] = new TeamRecord { Result = "lose" } },
+        Players = new() { new PlayerRecord { Team = "umbra", Name = "Uni Kura", K = 3, D = 0, A = 4, Dmg = 213171, Self = true } },
+    };
 
     private static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)
     {

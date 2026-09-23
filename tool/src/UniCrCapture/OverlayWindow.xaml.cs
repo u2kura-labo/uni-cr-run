@@ -163,7 +163,7 @@ public partial class OverlayWindow : Window
             Opacity = 1;
             SetStatus((Brush)FindResource("Accent"));
 
-            var outcome = await _capture.ProcessAsync(shot.Image, at);
+            var outcome = await _capture.ProcessAsync(shot.Image, at, confirm: ConfirmMap);
             var details = outcome.Details.ToList();
             if (!shot.FoundGame) details.Add("FF14 のウィンドウが見つからなかったので、画面全体を撮りました。");
             ShowToast(outcome.Ok, outcome.Title, details);
@@ -224,6 +224,32 @@ public partial class OverlayWindow : Window
             tone: paused ? "Border" : "Good");
     }
 
+    /// <summary>
+    /// 保存する前に、時刻から決めたマップでいいかを確かめる。
+    /// 違っていればその場で選び直せる。「次から確認しない」を選べば、以降は出さない。
+    /// </summary>
+    private bool ConfirmMap(MatchRecord match, IReadOnlyList<string> warnings)
+    {
+        if (!_settings.ConfirmMap) return true;
+        var note = warnings.FirstOrDefault(w => w.StartsWith("マップは時刻から決めました"));
+
+        AllowActivation(true);
+        try
+        {
+            var window = new MapConfirmWindow(match, note);
+            if (window.ShowDialog() != true) return false;
+            match.Map = window.SelectedMap;
+            if (!window.StopAsking) return true;
+            _settings.ConfirmMap = false;
+            _settings.Save();
+            return true;
+        }
+        finally
+        {
+            AllowActivation(false);
+        }
+    }
+
     /// <summary>終了する。歯車のメニューと設定の窓から呼ぶ。</summary>
     internal void Quit()
     {
@@ -267,6 +293,7 @@ public partial class OverlayWindow : Window
 
         menu.Items.Add(Item("保存フォルダを開く", OpenFolder));
         menu.Items.Add(Item("スクリーンショットから読み込む…", () => _ = ImportImagesAsync()));
+        menu.Items.Add(Item($"ジョブのアイコンを読み込む…（{_capture.JobIconStore.Count}/{GameData.Jobs.Count} 覚えています）", ImportJobIcons));
         menu.Items.Add(Item("ビューアを開く（Web）", () => Open(ViewerUrl)));
         menu.Items.Add(Item("設定…", () => OpenSettings(firstRun: false)));
         menu.Items.Add(new Separator());
@@ -321,6 +348,28 @@ public partial class OverlayWindow : Window
                 _settings.Save();
                 RegisterHotkey();
             }
+        }
+        finally
+        {
+            AllowActivation(false);
+        }
+    }
+
+    /// <summary>
+    /// ジョブのアイコンの画像をまとめて覚える。ファイル名がジョブの略称（PLD.png、WHM.png など）。
+    /// 覚えたジョブは、他のプレイヤーの行でも見分けられるようになる。
+    /// </summary>
+    private void ImportJobIcons()
+    {
+        var dialog = new OpenFolderDialog { Title = "ジョブのアイコンの画像が入ったフォルダを選ぶ（PLD.png のようにジョブの略称で）" };
+        AllowActivation(true);
+        try
+        {
+            if (dialog.ShowDialog() != true) return;
+            var (learned, skipped) = _capture.JobIconStore.Import(dialog.FolderName);
+            var lines = new List<string> { $"{learned} 個覚えました（ぜんぶで {_capture.JobIconStore.Count}/{GameData.Jobs.Count}）" };
+            lines.AddRange(skipped.Take(5));
+            ShowToast(skipped.Count == 0, "ジョブのアイコンを読み込みました", lines, tone: learned > 0 ? "Good" : "Warning");
         }
         finally
         {
